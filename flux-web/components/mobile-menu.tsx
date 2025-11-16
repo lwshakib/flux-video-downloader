@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import { Menu } from "lucide-react"
+import Link from "next/link"
 import {
   Sheet,
   SheetContent,
@@ -12,10 +13,10 @@ import {
 import { Button } from "@/components/ui/button"
 
 const navigationItems = [
-  { name: "Youtube", href: "#" },
-  { name: "Facebook", href: "#" },
-  { name: "Facebook Private Video", href: "#" },
-  { name: "TikTok", href: "#" },
+  { name: "Youtube", href: "/youtube" },
+  { name: "Facebook", href: "/facebook" },
+  { name: "Facebook Private Video", href: "/facebook-private-video" },
+  { name: "TikTok", href: "/tiktok" },
 ]
 
 export function MobileMenu() {
@@ -37,13 +38,13 @@ export function MobileMenu() {
         </SheetHeader>
         <nav className="flex flex-col gap-2 mt-6">
           {navigationItems.map((item) => (
-            <a
+            <Link
               key={item.name}
               href={item.href}
               className="px-4 py-3 text-base font-medium text-zinc-700 dark:text-zinc-300 rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
             >
               {item.name}
-            </a>
+            </Link>
           ))}
         </nav>
       </SheetContent>
