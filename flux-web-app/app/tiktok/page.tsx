@@ -1,7 +1,5 @@
 "use client";
 
-import { Footer } from "@/components/footer";
-import { Header } from "@/components/header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Search } from "lucide-react";
@@ -95,10 +93,8 @@ export default function TikTokPage() {
   };
 
   return (
-    <div className="flex min-h-screen flex-col bg-zinc-50 font-sans dark:bg-black">
-      <Header />
-      <main className="flex-1 container mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        <div className="max-w-4xl mx-auto">
+    <main className="flex-1 container mx-auto px-4 sm:px-6 lg:px-8 py-12">
+      <div className="max-w-4xl mx-auto">
           <h1 className="text-3xl font-bold text-black dark:text-zinc-50 mb-8">
             TikTok Video Downloader
           </h1>
@@ -235,9 +231,7 @@ export default function TikTokPage() {
               </div>
             </div>
           )}
-        </div>
-      </main>
-      <Footer />
-    </div>
+      </div>
+    </main>
   );
 }

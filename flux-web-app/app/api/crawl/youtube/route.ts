@@ -7,8 +7,8 @@ type CrawlRequestBody = {
 
 const RAPID_API_URL = "https://yt-api.p.rapidapi.com/dl";
 const RAPID_API_HOST = "yt-api.p.rapidapi.com";
-const DEFAULT_COUNTRY_CODE = "DE";
-const FALLBACK_API_KEY = "a73829b6b7mshb67604e5d9359c5p1dd706jsnc5d079d0f62a";
+const DEFAULT_COUNTRY_CODE = "BD";
+const RAPID_API_KEY = process.env.RAPID_API_KEY;
 
 function extractYouTubeId(input?: string | null) {
   if (!input) return null;
@@ -66,16 +66,13 @@ export async function POST(request: Request) {
       );
     }
 
-    const rapidApiKey =
-      process.env.RAPIDAPI_KEY ??
-      process.env.YOUTUBE_RAPIDAPI_KEY ??
-      FALLBACK_API_KEY;
+    const rapidApiKey = RAPID_API_KEY 
 
     if (!rapidApiKey) {
       return NextResponse.json(
         {
           error:
-            "RapidAPI key is not configured. Please set RAPIDAPI_KEY or YOUTUBE_RAPIDAPI_KEY.",
+            "RapidAPI key is not configured. Please set RAPID_API_KEY.",
         },
         { status: 500 }
       );

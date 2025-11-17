@@ -1,7 +1,5 @@
 "use client";
 
-import { Footer } from "@/components/footer";
-import { Header } from "@/components/header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -97,8 +95,7 @@ export default function YoutubePage() {
   };
 
   return (
-    <div className="flex min-h-screen flex-col bg-zinc-50 font-sans dark:bg-black overflow-x-hidden">
-      <Header />
+    <>
       <main className="flex-1 container mx-auto px-4 sm:px-6 lg:px-8 py-12 overflow-x-hidden">
         <div className="max-w-4xl mx-auto w-full">
           <h1 className="text-3xl font-bold text-black dark:text-zinc-50 mb-8">
@@ -305,7 +302,6 @@ export default function YoutubePage() {
           )}
         </div>
       </main>
-      <Footer />
       <Dialog
         open={isPreviewOpen}
         onOpenChange={(open) => {
@@ -354,6 +350,6 @@ export default function YoutubePage() {
           )}
         </DialogContent>
       </Dialog>
-    </div>
+    </>
   );
 }

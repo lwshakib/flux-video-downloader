@@ -1,7 +1,5 @@
 "use client";
 
-import { Footer } from "@/components/footer";
-import { Header } from "@/components/header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
@@ -116,10 +114,8 @@ export default function FacebookPrivateVideoPage() {
   };
 
   return (
-    <div className="flex min-h-screen flex-col bg-zinc-50 font-sans dark:bg-black overflow-x-hidden">
-      <Header />
-      <main className="flex-1 container mx-auto px-4 sm:px-6 lg:px-8 py-12 overflow-x-hidden">
-        <div className="max-w-4xl mx-auto w-full">
+    <main className="flex-1 container mx-auto px-4 sm:px-6 lg:px-8 py-12 overflow-x-hidden">
+      <div className="max-w-4xl mx-auto w-full">
           <h1 className="text-3xl font-bold text-black dark:text-zinc-50 mb-8">
             Facebook Private Video Downloader
           </h1>
@@ -256,9 +252,7 @@ export default function FacebookPrivateVideoPage() {
               </Card>
             </div>
           )}
-        </div>
-      </main>
-      <Footer />
-    </div>
+      </div>
+    </main>
   );
 }
