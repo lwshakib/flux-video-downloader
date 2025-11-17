@@ -5,6 +5,7 @@ import { Header } from "@/components/header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Download,
   Image as ImageIcon,
@@ -129,7 +130,27 @@ export default function FacebookPage() {
           <h1 className="text-3xl font-bold text-black dark:text-zinc-50 mb-8">
             Facebook Video Downloader
           </h1>
-          <div className="bg-white dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800 p-6 shadow-sm overflow-hidden">
+          <div className="bg-white dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800 p-6 shadow-sm overflow-hidden space-y-4">
+            <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md p-4 text-sm text-blue-900 dark:text-blue-100 space-y-2">
+              <p className="font-medium">How to get the Facebook video URL:</p>
+              <ol className="list-decimal list-inside space-y-1">
+                <li>
+                  Open Facebook and navigate to the video you want to download.
+                </li>
+                <li>
+                  Click the share button and choose “Copy link” (or copy the URL
+                  from the browser bar).
+                </li>
+                <li>
+                  Ensure the URL looks like{" "}
+                  <span className="font-mono text-xs break-all">
+                    https://www.facebook.com/.../videos/...
+                  </span>
+                  .
+                </li>
+                <li>Paste the copied link below and click Crawl.</li>
+              </ol>
+            </div>
             <div className="flex flex-col sm:flex-row gap-4">
               <div className="flex-1 relative min-w-0">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-zinc-400" />
@@ -157,15 +178,57 @@ export default function FacebookPage() {
             </div>
             {error && (
               <div className="mt-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md overflow-hidden">
-                <p className="text-sm text-red-600 dark:text-red-400 break-words">
+                <p className="text-sm text-red-600 dark:text-red-400 wrap-break-word">
                   {error}
                 </p>
               </div>
             )}
           </div>
 
+          {/* Loading Skeleton */}
+          {loading && (
+            <div className="mt-6 w-full overflow-hidden">
+              <Card className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 overflow-hidden">
+                <CardHeader className="overflow-hidden">
+                  <div className="flex items-start gap-4 min-w-0">
+                    <Skeleton className="w-32 h-20 rounded-lg shrink-0" />
+                    <div className="flex-1 min-w-0 overflow-hidden space-y-2">
+                      <Skeleton className="h-6 w-full max-w-md" />
+                      <Skeleton className="h-4 w-32" />
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="overflow-hidden">
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <Skeleton className="h-4 w-4 shrink-0" />
+                      <Skeleton className="h-4 w-40" />
+                    </div>
+                    <div className="grid gap-3 w-full">
+                      {[1, 2, 3].map((index) => (
+                        <div
+                          key={index}
+                          className="flex items-center justify-between p-4 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800/50 gap-3 min-w-0 overflow-hidden"
+                        >
+                          <div className="flex-1 min-w-0 overflow-hidden">
+                            <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+                              <Skeleton className="h-5 w-16 rounded-full" />
+                              <Skeleton className="h-4 w-20" />
+                              <Skeleton className="h-4 w-12" />
+                            </div>
+                          </div>
+                          <Skeleton className="h-9 w-24 shrink-0" />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
           {/* Video Data Display */}
-          {videoData && (
+          {videoData && !loading && (
             <div className="mt-6 w-full overflow-hidden">
               <Card className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 overflow-hidden">
                 <CardHeader className="overflow-hidden">
@@ -189,10 +252,10 @@ export default function FacebookPage() {
                       </div>
                     )}
                     <div className="flex-1 min-w-0 overflow-hidden">
-                      <CardTitle className="text-lg font-semibold text-black dark:text-zinc-50 mb-2 line-clamp-2 break-words">
+                      <CardTitle className="text-lg font-semibold text-black dark:text-zinc-50 mb-2 line-clamp-2 wrap-break-word">
                         {videoData.title}
                       </CardTitle>
-                      <p className="text-sm text-zinc-600 dark:text-zinc-400 break-words">
+                      <p className="text-sm text-zinc-600 dark:text-zinc-400 wrap-break-word">
                         {videoData.resolutions.length} quality option
                         {videoData.resolutions.length !== 1 ? "s" : ""}{" "}
                         available
