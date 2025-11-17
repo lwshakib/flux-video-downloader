@@ -1,5 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain } from "electron";
 // import { createRequire } from 'node:module'
+import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -40,12 +42,36 @@ const getIconPath = (): string => {
 
 const iconPath = getIconPath();
 
+const getSettingsPaths = () => {
+  const homeDir = process.env.USERPROFILE || os.homedir();
+  const settingsDir = path.join(homeDir, ".flux");
+  const settingsFile = path.join(settingsDir, "settings.json");
+  return { settingsDir, settingsFile };
+};
+
+const ensureSettingsFile = async () => {
+  const { settingsDir, settingsFile } = getSettingsPaths();
+  const defaultSettings = { downloadLocation: "Downloads" };
+
+  try {
+    await fs.mkdir(settingsDir, { recursive: true });
+    await fs.access(settingsFile);
+  } catch {
+    await fs.writeFile(
+      settingsFile,
+      JSON.stringify(defaultSettings, null, 2),
+      "utf-8"
+    );
+  }
+};
+
 process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
   ? path.join(process.env.APP_ROOT, "public")
   : RENDERER_DIST;
 
-  const downloaderUrl = VITE_DEV_SERVER_URL + "/downloader.html";
-
+const downloaderUrl = VITE_DEV_SERVER_URL
+  ? `${VITE_DEV_SERVER_URL}/downloader.html`
+  : path.join(RENDERER_DIST, "downloader.html");
 
 let downloaderWindow: BrowserWindow | null;
 
@@ -69,13 +95,19 @@ function createWindow() {
   });
 
   downloaderWindow = new BrowserWindow({
-    width: 500,
-    height: 200,
+    width: 600,
+    height: 300,
     show: false,
     autoHideMenuBar: true,
     center: true,
     title: "Flux Downloader",
     frame: false,
+    icon: iconPath,
+    webPreferences: {
+      preload: path.join(__dirname, "preload.mjs"),
+      sandbox: true,
+      contextIsolation: true,
+    },
   });
 
   downloaderWindow.on("ready-to-show", () => {
@@ -83,7 +115,10 @@ function createWindow() {
   });
 
   downloaderWindow.webContents.on("did-finish-load", () => {
-    downloaderWindow?.webContents.send("main-process-message", new Date().toLocaleString());
+    downloaderWindow?.webContents.send(
+      "main-process-message",
+      new Date().toLocaleString()
+    );
   });
 
   win.on("ready-to-show", () => {
@@ -101,6 +136,7 @@ function createWindow() {
   } else {
     // win.loadFile('dist/index.html')
     win.loadFile(path.join(RENDERER_DIST, "index.html"));
+    downloaderWindow.loadFile(downloaderUrl);
   }
 }
 
@@ -115,6 +151,35 @@ ipcMain.handle("select-download-location", async () => {
   }
 
   return filePaths[0];
+});
+
+ipcMain.handle("load-settings", async () => {
+  try {
+    const { settingsDir, settingsFile } = getSettingsPaths();
+    await fs.mkdir(settingsDir, { recursive: true });
+    const contents = await fs.readFile(settingsFile, "utf-8");
+    return JSON.parse(contents);
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err?.code === "ENOENT") {
+      return null;
+    }
+    console.error("Failed to load settings", error);
+    return null;
+  }
+});
+
+ipcMain.handle("save-settings", async (_event, payload) => {
+  try {
+    const { settingsDir, settingsFile } = getSettingsPaths();
+    await fs.mkdir(settingsDir, { recursive: true });
+    const data = JSON.stringify(payload ?? {}, null, 2);
+    await fs.writeFile(settingsFile, data, "utf-8");
+    return true;
+  } catch (error) {
+    console.error("Failed to save settings", error);
+    return false;
+  }
 });
 
 // Quit when all windows are closed, except on macOS. There, it's common
@@ -135,4 +200,7 @@ app.on("activate", () => {
   }
 });
 
-app.whenReady().then(createWindow);
+app.whenReady().then(async () => {
+  await ensureSettingsFile();
+  createWindow();
+});

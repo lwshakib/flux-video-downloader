@@ -21,11 +21,20 @@ const contentMap: Record<string, string> = {
   settings: "Manage preferences, usage limits, and integrations.",
 };
 
+type AppSettings = {
+  downloadLocation: string;
+};
+
+const defaultSettings: AppSettings = {
+  downloadLocation: "Downloads",
+};
+
 function App() {
   const [activeProject, setActiveProject] = useState("home");
   const [searchValue, setSearchValue] = useState("");
-  const [downloadLocation, setDownloadLocation] = useState("Downloads");
+  const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const [isChoosingLocation, setIsChoosingLocation] = useState(false);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
   const content = useMemo(
     () => contentMap[activeProject] ?? contentMap.home,
     [activeProject]
@@ -47,7 +56,10 @@ function App() {
         "select-download-location"
       );
       if (selectedPath) {
-        setDownloadLocation(selectedPath);
+        setSettings((prev) => ({
+          ...prev,
+          downloadLocation: selectedPath,
+        }));
       }
     } catch (error) {
       console.error("Failed to select download location", error);
@@ -59,6 +71,48 @@ function App() {
   useEffect(() => {
     setSearchValue("");
   }, [activeProject]);
+  useEffect(() => {
+    if (!window?.ipcRenderer) {
+      setSettingsLoaded(true);
+      return;
+    }
+
+    let isCancelled = false;
+
+    window.ipcRenderer
+      .invoke("load-settings")
+      .then((loaded) => {
+        if (
+          !isCancelled &&
+          loaded &&
+          typeof loaded.downloadLocation === "string"
+        ) {
+          setSettings({
+            downloadLocation: loaded.downloadLocation,
+          });
+        }
+      })
+      .catch((error) => {
+        console.error("Failed to load settings", error);
+      })
+      .finally(() => {
+        if (!isCancelled) {
+          setSettingsLoaded(true);
+        }
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!window?.ipcRenderer || !settingsLoaded) return;
+
+    window.ipcRenderer
+      .invoke("save-settings", settings)
+      .catch((error) => console.error("Failed to save settings", error));
+  }, [settings, settingsLoaded]);
   const homeFeatures = [
     {
       title: "Multi-platform support",
@@ -180,10 +234,12 @@ function App() {
                   </p>
                   <div className="mt-4 flex flex-col gap-2 md:flex-row">
                     <Input
-                      value={downloadLocation}
-                      disabled
+                      value={settings.downloadLocation}
                       onChange={(event) =>
-                        setDownloadLocation(event.target.value)
+                        setSettings((prev) => ({
+                          ...prev,
+                          downloadLocation: event.target.value,
+                        }))
                       }
                       placeholder="Downloads folder"
                       className="flex-1"
