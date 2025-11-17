@@ -44,6 +44,11 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
   ? path.join(process.env.APP_ROOT, "public")
   : RENDERER_DIST;
 
+  const downloaderUrl = VITE_DEV_SERVER_URL + "/downloader.html";
+
+
+let downloaderWindow: BrowserWindow | null;
+
 let win: BrowserWindow | null;
 
 function createWindow() {
@@ -63,6 +68,24 @@ function createWindow() {
     },
   });
 
+  downloaderWindow = new BrowserWindow({
+    width: 500,
+    height: 200,
+    show: false,
+    autoHideMenuBar: true,
+    center: true,
+    title: "Flux Downloader",
+    frame: false,
+  });
+
+  downloaderWindow.on("ready-to-show", () => {
+    downloaderWindow?.show();
+  });
+
+  downloaderWindow.webContents.on("did-finish-load", () => {
+    downloaderWindow?.webContents.send("main-process-message", new Date().toLocaleString());
+  });
+
   win.on("ready-to-show", () => {
     win?.show();
   });
@@ -74,6 +97,7 @@ function createWindow() {
 
   if (VITE_DEV_SERVER_URL) {
     win.loadURL(VITE_DEV_SERVER_URL);
+    downloaderWindow.loadURL(downloaderUrl);
   } else {
     // win.loadFile('dist/index.html')
     win.loadFile(path.join(RENDERER_DIST, "index.html"));

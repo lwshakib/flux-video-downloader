@@ -21,6 +21,8 @@ const getIconPath = () => {
 };
 const iconPath = getIconPath();
 process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, "public") : RENDERER_DIST;
+const downloaderUrl = VITE_DEV_SERVER_URL + "/downloader.html";
+let downloaderWindow;
 let win;
 function createWindow() {
   win = new BrowserWindow({
@@ -38,6 +40,21 @@ function createWindow() {
       contextIsolation: true
     }
   });
+  downloaderWindow = new BrowserWindow({
+    width: 500,
+    height: 200,
+    show: false,
+    autoHideMenuBar: true,
+    center: true,
+    title: "Flux Downloader",
+    frame: false
+  });
+  downloaderWindow.on("ready-to-show", () => {
+    downloaderWindow == null ? void 0 : downloaderWindow.show();
+  });
+  downloaderWindow.webContents.on("did-finish-load", () => {
+    downloaderWindow == null ? void 0 : downloaderWindow.webContents.send("main-process-message", (/* @__PURE__ */ new Date()).toLocaleString());
+  });
   win.on("ready-to-show", () => {
     win == null ? void 0 : win.show();
   });
@@ -46,6 +63,7 @@ function createWindow() {
   });
   if (VITE_DEV_SERVER_URL) {
     win.loadURL(VITE_DEV_SERVER_URL);
+    downloaderWindow.loadURL(downloaderUrl);
   } else {
     win.loadFile(path.join(RENDERER_DIST, "index.html"));
   }
