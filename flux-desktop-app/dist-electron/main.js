@@ -1,4 +1,4 @@
-import { ipcMain, dialog, app, BrowserWindow } from "electron";
+import { ipcMain, dialog, BrowserWindow, app } from "electron";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -136,6 +136,13 @@ ipcMain.handle("save-settings", async (_event, payload) => {
     console.error("Failed to save settings", error);
     return false;
   }
+});
+ipcMain.on("theme-change", (_event, theme) => {
+  BrowserWindow.getAllWindows().forEach((window) => {
+    if (window && !window.isDestroyed()) {
+      window.webContents.send("theme-changed", theme);
+    }
+  });
 });
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {

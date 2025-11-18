@@ -182,6 +182,16 @@ ipcMain.handle("save-settings", async (_event, payload) => {
   }
 });
 
+// Handle theme changes and broadcast to all windows
+ipcMain.on("theme-change", (_event, theme: string) => {
+  // Broadcast theme change to all windows
+  BrowserWindow.getAllWindows().forEach((window) => {
+    if (window && !window.isDestroyed()) {
+      window.webContents.send("theme-changed", theme);
+    }
+  });
+});
+
 // Quit when all windows are closed, except on macOS. There, it's common
 // for applications and their menu bar to stay active until the user quits
 // explicitly with Cmd + Q.

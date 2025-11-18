@@ -4,6 +4,7 @@ import ReactDOM from "react-dom/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { FolderOpen } from "lucide-react";
+import { ThemeProvider } from "@/components/theme-provider";
 import "./index.css";
 
 export function DownloaderApp() {
@@ -75,6 +76,8 @@ export function DownloaderApp() {
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <DownloaderApp />
+    <ThemeProvider defaultTheme="system" storageKey="vite-ui-theme">
+      <DownloaderApp />
+    </ThemeProvider>
   </React.StrictMode>
 );
