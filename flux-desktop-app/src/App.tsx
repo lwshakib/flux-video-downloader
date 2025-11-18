@@ -302,18 +302,33 @@ function App() {
           <div className="ml-auto flex items-center gap-1 sm:gap-2 px-2 sm:px-4">
             <button
               aria-label="Minimize window"
+              onClick={() => {
+                if (window?.ipcRenderer) {
+                  window.ipcRenderer.invoke("window-minimize");
+                }
+              }}
               className="no-drag-css flex size-7 sm:size-8 cursor-pointer items-center justify-center rounded bg-background text-sm font-semibold text-muted-foreground transition hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-ring"
             >
               —
             </button>
             <button
               aria-label="Maximize window"
+              onClick={() => {
+                if (window?.ipcRenderer) {
+                  window.ipcRenderer.invoke("window-maximize");
+                }
+              }}
               className="no-drag-css flex size-7 sm:size-8 cursor-pointer items-center justify-center rounded bg-background text-sm font-semibold text-muted-foreground transition hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-ring"
             >
               ☐
             </button>
             <button
               aria-label="Close window"
+              onClick={() => {
+                if (window?.ipcRenderer) {
+                  window.ipcRenderer.invoke("window-close");
+                }
+              }}
               className="no-drag-css flex size-8 sm:size-9 cursor-pointer items-center justify-center rounded bg-background text-lg sm:text-xl font-semibold text-muted-foreground transition hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-destructive"
             >
               ×
