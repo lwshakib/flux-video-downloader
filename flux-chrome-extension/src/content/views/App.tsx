@@ -8,6 +8,7 @@ interface VideoElement {
 
 function DownloadVideoButton({ video }: { video: HTMLVideoElement }) {
   const [position, setPosition] = useState({ top: 0, left: 0 });
+  const [isVisible, setIsVisible] = useState(true);
   const buttonRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -80,6 +81,8 @@ function DownloadVideoButton({ video }: { video: HTMLVideoElement }) {
     }
   };
 
+  if (!isVisible) return null;
+
   return (
     <div
       ref={buttonRef}
@@ -96,8 +99,8 @@ function DownloadVideoButton({ video }: { video: HTMLVideoElement }) {
         title="Download Video"
       >
         <svg
-          width="20"
-          height="20"
+          width="16"
+          height="16"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
@@ -109,7 +112,25 @@ function DownloadVideoButton({ video }: { video: HTMLVideoElement }) {
           <polyline points="7 10 12 15 17 10" />
           <line x1="12" y1="15" x2="12" y2="3" />
         </svg>
-        <span className="flux-download-text">Download Video</span>
+      </button>
+      <button
+        onClick={() => setIsVisible(false)}
+        className="flux-cancel-btn"
+        title="Close"
+      >
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <line x1="18" y1="6" x2="6" y2="18" />
+          <line x1="6" y1="6" x2="18" y2="18" />
+        </svg>
       </button>
     </div>
   );

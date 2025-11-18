@@ -1,19 +1,22 @@
 .flux-download-button {
   z-index: 999999;
   pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .flux-download-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 8px 12px;
+  padding: 6px;
   min-width: auto;
-  height: 40px;
+  width: 32px;
+  height: 32px;
   background-color: rgba(0, 0, 0, 0.7);
   border: none;
-  border-radius: 8px;
+  border-radius: 6px;
   cursor: pointer;
   color: white;
   transition: all 0.2s ease;
@@ -21,7 +24,6 @@
   backdrop-filter: blur(4px);
   font-size: 14px;
   font-weight: 500;
-  white-space: nowrap;
 }
 
 .flux-download-btn:hover {
@@ -34,12 +36,40 @@
 }
 
 .flux-download-btn svg {
-  width: 20px;
-  height: 20px;
+  width: 16px;
+  height: 16px;
   flex-shrink: 0;
 }
 
-.flux-download-text {
-  font-family: ui-sans-serif, system-ui, sans-serif;
-  user-select: none;
+.flux-cancel-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  width: 24px;
+  height: 24px;
+  background-color: rgba(0, 0, 0, 0.7);
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  color: white;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(4px);
+}
+
+.flux-cancel-btn:hover {
+  transform: scale(1.1);
+  background-color: rgba(220, 38, 38, 0.8);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.flux-cancel-btn:active {
+  transform: scale(0.95);
+}
+
+.flux-cancel-btn svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
 }
