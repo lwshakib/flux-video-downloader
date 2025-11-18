@@ -196,3 +196,12 @@
 .no-drag-css {
   -webkit-app-region: no-drag;
 }
+
+/* Disable text selection globally for downloader window */
+.select-none,
+.select-none * {
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+}

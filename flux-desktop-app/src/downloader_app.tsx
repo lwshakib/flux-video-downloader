@@ -1,15 +1,15 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 
+import { ThemeProvider } from "@/components/theme-provider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { FolderOpen } from "lucide-react";
-import { ThemeProvider } from "@/components/theme-provider";
 import "./index.css";
 
 export function DownloaderApp() {
   return (
-    <div className="flex h-screen w-screen flex-col items-center gap-4 bg-background p-0 text-sm">
+    <div className="flex h-screen w-screen flex-col items-center gap-4 bg-background p-0 text-sm select-none">
       <header className="flex w-full items-center justify-between border-b border-border bg-muted/40 px-4 py-2 text-xs font-semibold uppercase tracking-wide drag-css">
         <span>Download File Info</span>
         <div className="flex items-center gap-1.5">

@@ -97,6 +97,11 @@ function createWindow() {
   downloaderWindow = new BrowserWindow({
     width: 600,
     height: 300,
+    minWidth: 600,
+    maxWidth: 600,
+    minHeight: 300,
+    maxHeight: 300,
+    resizable: false,
     show: false,
     autoHideMenuBar: true,
     center: true,
