@@ -72,7 +72,7 @@ export async function POST(request: Request) {
     if (!url) {
       return NextResponse.json(
         { error: "URL is required and must be a non-empty string." },
-        { 
+        {
           status: 400,
           headers: getCorsHeaders(),
         }
@@ -83,7 +83,7 @@ export async function POST(request: Request) {
     if (!videoId) {
       return NextResponse.json(
         { error: "Unable to determine a valid YouTube video ID from the URL." },
-        { 
+        {
           status: 422,
           headers: getCorsHeaders(),
         }
@@ -95,10 +95,9 @@ export async function POST(request: Request) {
     if (!rapidApiKey) {
       return NextResponse.json(
         {
-          error:
-            "RapidAPI key is not configured. Please set RAPID_API_KEY.",
+          error: "RapidAPI key is not configured. Please set RAPID_API_KEY.",
         },
-        { 
+        {
           status: 500,
           headers: getCorsHeaders(),
         }
@@ -173,45 +172,120 @@ export async function POST(request: Request) {
           return best;
         }).url
       : null;
+
     const rawAdaptiveFormats = Array.isArray(responseData.adaptiveFormats)
       ? responseData.adaptiveFormats
       : [];
 
-    const resolutions = rawAdaptiveFormats
-      .map(
-        (
-          format: {
-            url?: string;
-            qualityLabel?: string;
-            width?: number;
-            height?: number;
-            mimeType?: string;
-          } | null
-        ) => {
-          if (!format) return null;
+    type Format = {
+      url?: string;
+      qualityLabel?: string;
+      width?: number;
+      height?: number;
+      mimeType?: string;
+      bitrate?: number;
+      audioQuality?: string;
+      audioSampleRate?: string;
+    };
 
-          const {
-            url: formatUrl,
-            qualityLabel,
-            width,
-            height,
-            mimeType,
-          } = format ?? {};
+    // Separate video and audio formats
+    const videoFormats: Format[] = [];
+    const audioFormats: Format[] = [];
 
-          if (!formatUrl || !qualityLabel || !width || !height || !mimeType) {
-            return null;
-          }
+    rawAdaptiveFormats.forEach((format: Format | null) => {
+      if (!format || !format.url || !format.mimeType) return;
 
-          return {
-            url: formatUrl,
-            qualityLabel,
-            width,
-            height,
-            mimeType,
-          };
+      const mimeType = format.mimeType.toLowerCase();
+
+      if (mimeType.startsWith("video/")) {
+        if (format.qualityLabel && format.width && format.height) {
+          videoFormats.push(format);
         }
-      )
-      .filter(Boolean);
+      } else if (mimeType.startsWith("audio/")) {
+        audioFormats.push(format);
+      }
+    });
+
+    // Deduplicate video formats by qualityLabel, prioritizing MP4
+    const videoMap = new Map<string, Format>();
+
+    videoFormats.forEach((format) => {
+      const qualityKey =
+        format.qualityLabel || `${format.width}x${format.height}`;
+      const existing = videoMap.get(qualityKey);
+
+      if (!existing) {
+        videoMap.set(qualityKey, format);
+      } else {
+        // Prefer MP4 over other formats for the same quality
+        const existingIsMp4 = existing.mimeType?.toLowerCase().includes("mp4");
+        const currentIsMp4 = format.mimeType?.toLowerCase().includes("mp4");
+
+        if (currentIsMp4 && !existingIsMp4) {
+          videoMap.set(qualityKey, format);
+        }
+      }
+    });
+
+    const resolutions = Array.from(videoMap.values())
+      .map((format) => ({
+        url: format.url!,
+        qualityLabel: format.qualityLabel!,
+        width: format.width!,
+        height: format.height!,
+        mimeType: format.mimeType!,
+      }))
+      .sort((a, b) => {
+        // Sort by resolution (height) descending
+        return (b.height || 0) - (a.height || 0);
+      });
+
+    // Find best quality audio (highest bitrate)
+    let bestAudio: {
+      url: string;
+      mimeType: string;
+      bitrate?: number;
+      audioQuality?: string;
+      audioSampleRate?: string;
+    } | null = null;
+
+    if (audioFormats.length > 0) {
+      const bestAudioFormat = audioFormats
+        .filter((f): f is Format & { url: string; mimeType: string } =>
+          Boolean(f.url && f.mimeType)
+        )
+        .reduce((best, current) => {
+          const bestBitrate = best.bitrate || 0;
+          const currentBitrate = current.bitrate || 0;
+
+          if (currentBitrate > bestBitrate) {
+            return current;
+          }
+          // If bitrates are equal, prefer higher sample rate
+          if (
+            currentBitrate === bestBitrate &&
+            current.audioSampleRate &&
+            best.audioSampleRate
+          ) {
+            const currentSampleRate = parseInt(current.audioSampleRate) || 0;
+            const bestSampleRate = parseInt(best.audioSampleRate) || 0;
+            if (currentSampleRate > bestSampleRate) {
+              return current;
+            }
+          }
+          return best;
+        });
+
+      if (bestAudioFormat && bestAudioFormat.url && bestAudioFormat.mimeType) {
+        bestAudio = {
+          url: bestAudioFormat.url,
+          mimeType: bestAudioFormat.mimeType,
+          bitrate: bestAudioFormat.bitrate,
+          audioQuality: bestAudioFormat.audioQuality,
+          audioSampleRate: bestAudioFormat.audioSampleRate,
+        };
+      }
+    }
 
     return NextResponse.json(
       {
@@ -220,6 +294,7 @@ export async function POST(request: Request) {
         title: responseData.title ?? null,
         thumbnail: primaryThumbnail,
         resolutions,
+        audio: bestAudio,
       },
       {
         headers: getCorsHeaders(),
@@ -236,7 +311,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json(
       { error: message },
-      { 
+      {
         status: 500,
         headers: getCorsHeaders(),
       }

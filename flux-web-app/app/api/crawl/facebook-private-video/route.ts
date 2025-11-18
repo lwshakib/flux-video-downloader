@@ -6,6 +6,24 @@ import {
 } from "@/utilities/facebook-utils";
 import { NextResponse } from "next/server";
 
+// CORS headers helper
+function getCorsHeaders() {
+  return {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Max-Age": "86400",
+  };
+}
+
+// Handle OPTIONS request for CORS preflight
+export async function OPTIONS() {
+  return new NextResponse(null, {
+    status: 200,
+    headers: getCorsHeaders(),
+  });
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -17,7 +35,10 @@ export async function POST(request: Request) {
     if (!source || typeof source !== "string") {
       return NextResponse.json(
         { error: "html or pageSource is required and must be a string" },
-        { status: 400 }
+        { 
+          status: 400,
+          headers: getCorsHeaders(),
+        }
       );
     }
 
@@ -31,7 +52,10 @@ export async function POST(request: Request) {
         {
           error: "No video streams found in the provided page source",
         },
-        { status: 404 }
+        { 
+          status: 404,
+          headers: getCorsHeaders(),
+        }
       );
     }
 
@@ -42,7 +66,9 @@ export async function POST(request: Request) {
     // Format video data
     const videoData = formatVideoData(streamsData, title, thumbnail);
 
-    return NextResponse.json(videoData);
+    return NextResponse.json(videoData, {
+      headers: getCorsHeaders(),
+    });
   } catch (error) {
     console.error("Error processing page source:", error);
     const errorMessage =
@@ -52,7 +78,10 @@ export async function POST(request: Request) {
       {
         error: errorMessage,
       },
-      { status: 500 }
+      { 
+        status: 500,
+        headers: getCorsHeaders(),
+      }
     );
   }
 }

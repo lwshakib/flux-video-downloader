@@ -73,8 +73,6 @@ const downloaderUrl = VITE_DEV_SERVER_URL
   ? `${VITE_DEV_SERVER_URL}/downloader.html`
   : path.join(RENDERER_DIST, "downloader.html");
 
-let downloaderWindow: BrowserWindow | null;
-
 let win: BrowserWindow | null;
 
 function createWindow() {
@@ -94,43 +92,8 @@ function createWindow() {
     },
   });
 
-  downloaderWindow = new BrowserWindow({
-    width: 600,
-    height: 300,
-    minWidth: 600,
-    maxWidth: 600,
-    minHeight: 300,
-    maxHeight: 300,
-    resizable: false,
-    show: false,
-    autoHideMenuBar: true,
-    center: true,
-    title: "Flux Downloader",
-    frame: false,
-    icon: iconPath,
-    webPreferences: {
-      preload: path.join(__dirname, "preload.mjs"),
-      sandbox: true,
-      contextIsolation: true,
-    },
-  });
-
   // Open DevTools for main window
   win.webContents.openDevTools();
-
-  downloaderWindow.on("ready-to-show", () => {
-    downloaderWindow?.show();
-  });
-
-  // Open DevTools for downloader window
-  downloaderWindow.webContents.openDevTools();
-
-  downloaderWindow.webContents.on("did-finish-load", () => {
-    downloaderWindow?.webContents.send(
-      "main-process-message",
-      new Date().toLocaleString()
-    );
-  });
 
   win.on("ready-to-show", () => {
     win?.show();
@@ -143,11 +106,9 @@ function createWindow() {
 
   if (VITE_DEV_SERVER_URL) {
     win.loadURL(VITE_DEV_SERVER_URL);
-    downloaderWindow.loadURL(downloaderUrl);
   } else {
     // win.loadFile('dist/index.html')
     win.loadFile(path.join(RENDERER_DIST, "index.html"));
-    downloaderWindow.loadFile(downloaderUrl);
   }
 }
 
@@ -202,6 +163,76 @@ ipcMain.on("theme-change", (_event, theme: string) => {
     }
   });
 });
+
+// Handle download requests - creates a new window for each download
+ipcMain.handle(
+  "start-download",
+  async (
+    _event,
+    payload: {
+      url: string;
+      title?: string | null;
+      cookies?: {
+        msToken?: string | null;
+        ttChainToken?: string | null;
+      } | null;
+    }
+  ) => {
+    // Create a new downloader window for each download
+    const newDownloaderWindow = new BrowserWindow({
+      width: 600,
+      height: 300,
+      minWidth: 600,
+      maxWidth: 600,
+      minHeight: 300,
+      maxHeight: 300,
+      resizable: false,
+      show: false,
+      autoHideMenuBar: true,
+      center: true,
+      title: "Flux Downloader",
+      frame: false,
+      icon: iconPath,
+      webPreferences: {
+        preload: path.join(__dirname, "preload.mjs"),
+        sandbox: true,
+        contextIsolation: true,
+      },
+    });
+
+    newDownloaderWindow.on("ready-to-show", () => {
+      newDownloaderWindow?.show();
+    });
+
+    // Open DevTools for downloader window
+    newDownloaderWindow.webContents.openDevTools();
+
+    // Wait for the window to be ready, then send download data
+    const sendDownloadData = () => {
+      if (newDownloaderWindow && !newDownloaderWindow.isDestroyed()) {
+        newDownloaderWindow.webContents.send("download-request", {
+          url: payload.url,
+          title: payload.title || null,
+          cookies: payload.cookies || null,
+        });
+        newDownloaderWindow.show();
+        newDownloaderWindow.focus();
+      }
+    };
+
+    // Load the downloader page
+    if (VITE_DEV_SERVER_URL) {
+      newDownloaderWindow.loadURL(downloaderUrl);
+    } else {
+      newDownloaderWindow.loadFile(path.join(RENDERER_DIST, "downloader.html"));
+    }
+
+    // Send data once the page is loaded
+    newDownloaderWindow.webContents.once("did-finish-load", sendDownloadData);
+
+    return true;
+  }
+);
 
 // Quit when all windows are closed, except on macOS. There, it's common
 // for applications and their menu bar to stay active until the user quits

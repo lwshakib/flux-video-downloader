@@ -205,3 +205,25 @@
   -ms-user-select: none;
   user-select: none;
 }
+
+/* Responsive utilities */
+@layer utilities {
+  .wrap-break-word {
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    word-break: break-word;
+  }
+  
+  /* Ensure images are responsive */
+  img {
+    max-width: 100%;
+    height: auto;
+  }
+  
+  /* Better text wrapping on small screens */
+  @media (max-width: 640px) {
+    .text-balance {
+      text-wrap: balance;
+    }
+  }
+}

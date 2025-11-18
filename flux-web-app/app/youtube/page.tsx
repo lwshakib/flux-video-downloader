@@ -11,7 +11,13 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Download, Image as ImageIcon, Search, Video } from "lucide-react";
+import {
+  Download,
+  Image as ImageIcon,
+  Music,
+  Search,
+  Video,
+} from "lucide-react";
 import Image from "next/image";
 import { useState } from "react";
 
@@ -23,12 +29,21 @@ interface Resolution {
   mimeType: string;
 }
 
+interface Audio {
+  url: string;
+  mimeType: string;
+  bitrate?: number;
+  audioQuality?: string;
+  audioSampleRate?: string;
+}
+
 interface CrawlResult {
   status: string;
   videoId: string;
   title: string | null;
   thumbnail: string | null;
   resolutions: Resolution[];
+  audio: Audio | null;
 }
 
 export default function YoutubePage() {
@@ -79,6 +94,20 @@ export default function YoutubePage() {
     const performDownload = () => {
       const anchor = document.createElement("a");
       anchor.href = resolution.url;
+      anchor.target = "_blank";
+      anchor.rel = "noopener noreferrer";
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+    };
+
+    performDownload();
+  };
+
+  const handleAudioDownload = (audio: Audio) => {
+    const performDownload = () => {
+      const anchor = document.createElement("a");
+      anchor.href = audio.url;
       anchor.target = "_blank";
       anchor.rel = "noopener noreferrer";
       document.body.appendChild(anchor);
@@ -298,6 +327,54 @@ export default function YoutubePage() {
                   </div>
                 </CardContent>
               </Card>
+
+              {videoData.audio && (
+                <Card className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 overflow-hidden">
+                  <CardContent className="pt-6 overflow-hidden">
+                    <div className="space-y-3">
+                      <h3 className="text-sm font-medium text-black dark:text-zinc-50 flex items-center gap-2">
+                        <Music className="h-4 w-4 shrink-0" />
+                        Audio Only
+                      </h3>
+                      <div className="flex items-center justify-between p-4 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800/50 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors gap-3 min-w-0 overflow-hidden">
+                        <div className="flex-1 min-w-0 overflow-hidden">
+                          <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-200 shrink-0">
+                              {videoData.audio.audioQuality || "Best Quality"}
+                            </span>
+                            <span className="text-sm text-zinc-600 dark:text-zinc-400 whitespace-nowrap">
+                              {videoData.audio.mimeType
+                                ?.split(";")[0]
+                                ?.split("/")[1]
+                                ?.toUpperCase() || "AUDIO"}
+                            </span>
+                            {videoData.audio.bitrate && (
+                              <span className="text-sm text-zinc-500 dark:text-zinc-500 whitespace-nowrap">
+                                {Math.round(videoData.audio.bitrate / 1000)}{" "}
+                                kbps
+                              </span>
+                            )}
+                            {videoData.audio.audioSampleRate && (
+                              <span className="text-sm text-zinc-500 dark:text-zinc-500 whitespace-nowrap">
+                                {parseInt(videoData.audio.audioSampleRate) /
+                                  1000}{" "}
+                                kHz
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <Button
+                          size="sm"
+                          onClick={() => handleAudioDownload(videoData.audio!)}
+                        >
+                          <Download className="h-4 w-4 sm:mr-2" />
+                          <span className="hidden sm:inline">Download</span>
+                        </Button>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
             </div>
           )}
         </div>

@@ -5,6 +5,16 @@ type CrawlRequestBody = {
 };
 
 const SCRIPT_ID = "__UNIVERSAL_DATA_FOR_REHYDRATION__";
+
+// CORS headers helper
+function getCorsHeaders() {
+  return {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Max-Age": "86400",
+  };
+}
 function withCustomToken(url?: string | null) {
   // Respect original TikTok token; only ensure string output consistency.
   return url ?? undefined;
@@ -140,6 +150,14 @@ function buildResponsePayload(itemStruct: Record<string, unknown>) {
   };
 }
 
+// Handle OPTIONS request for CORS preflight
+export async function OPTIONS() {
+  return new NextResponse(null, {
+    status: 200,
+    headers: getCorsHeaders(),
+  });
+}
+
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as CrawlRequestBody;
@@ -148,7 +166,10 @@ export async function POST(request: Request) {
     if (!url) {
       return NextResponse.json(
         { error: "URL is required and must be a non-empty string." },
-        { status: 400 }
+        {
+          status: 400,
+          headers: getCorsHeaders(),
+        }
       );
     }
 
@@ -174,21 +195,29 @@ export async function POST(request: Request) {
     if (!itemStruct) {
       return NextResponse.json(
         { error: "Video detail data was not found in the provided HTML." },
-        { status: 422 }
+        {
+          status: 422,
+          headers: getCorsHeaders(),
+        }
       );
     }
 
     const summary = buildResponsePayload(itemStruct);
 
-    return NextResponse.json({
-      status: "ok",
-      url,
-      tokens: {
-        msToken: msToken ?? null,
-        ttChainToken: ttChainToken ?? null,
+    return NextResponse.json(
+      {
+        status: "ok",
+        url,
+        tokens: {
+          msToken: msToken ?? null,
+          ttChainToken: ttChainToken ?? null,
+        },
+        ...summary,
       },
-      ...summary,
-    });
+      {
+        headers: getCorsHeaders(),
+      }
+    );
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Internal server error.";
@@ -197,6 +226,7 @@ export async function POST(request: Request) {
       { error: message },
       {
         status: 500,
+        headers: getCorsHeaders(),
       }
     );
   }

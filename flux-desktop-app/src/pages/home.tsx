@@ -16,20 +16,20 @@ export function HomePage() {
 
   return (
     <>
-      <div className="mt-6 grid gap-4 md:grid-cols-3">
+      <div className="mt-4 sm:mt-6 grid gap-3 sm:gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
         {homeFeatures.map((feature) => (
           <div
             key={feature.title}
-            className="rounded-lg border border-border bg-background p-4 shadow-sm"
+            className="rounded-lg border border-border bg-background p-3 sm:p-4 shadow-sm"
           >
-            <h3 className="text-lg font-semibold">{feature.title}</h3>
-            <p className="mt-1 text-sm text-muted-foreground">
+            <h3 className="text-base sm:text-lg font-semibold">{feature.title}</h3>
+            <p className="mt-1 text-xs sm:text-sm text-muted-foreground">
               {feature.description}
             </p>
           </div>
         ))}
       </div>
-      <div className="mt-6 rounded-lg border border-dashed border-border bg-background/80 p-4 text-sm text-muted-foreground">
+      <div className="mt-4 sm:mt-6 rounded-lg border border-dashed border-border bg-background/80 p-3 sm:p-4 text-xs sm:text-sm text-muted-foreground">
         Tip: Pick a platform from the sidebar to see its dedicated workflow.
       </div>
     </>

@@ -7,6 +7,16 @@ import {
 import axios from "axios";
 import { NextResponse } from "next/server";
 
+// CORS headers helper
+function getCorsHeaders() {
+  return {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Max-Age": "86400",
+  };
+}
+
 // Try to load Puppeteer for browser-rendered pages
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let puppeteer: any = null;
@@ -93,6 +103,14 @@ async function fetchPageSource(url: string): Promise<string> {
   return response.data;
 }
 
+// Handle OPTIONS request for CORS preflight
+export async function OPTIONS() {
+  return new NextResponse(null, {
+    status: 200,
+    headers: getCorsHeaders(),
+  });
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -101,7 +119,10 @@ export async function POST(request: Request) {
     if (!url || typeof url !== "string") {
       return NextResponse.json(
         { error: "URL is required and must be a string" },
-        { status: 400 }
+        {
+          status: 400,
+          headers: getCorsHeaders(),
+        }
       );
     }
 
@@ -118,7 +139,10 @@ export async function POST(request: Request) {
         {
           error: "No video streams found in the page",
         },
-        { status: 404 }
+        {
+          status: 404,
+          headers: getCorsHeaders(),
+        }
       );
     }
 
@@ -129,7 +153,9 @@ export async function POST(request: Request) {
     // Format video data
     const videoData = formatVideoData(streamsData, title, thumbnail);
 
-    return NextResponse.json(videoData);
+    return NextResponse.json(videoData, {
+      headers: getCorsHeaders(),
+    });
   } catch (error) {
     console.error("Error fetching page source:", error);
     const errorMessage =
@@ -144,7 +170,10 @@ export async function POST(request: Request) {
         error: errorMessage,
         details: httpStatus,
       },
-      { status: 500 }
+      {
+        status: 500,
+        headers: getCorsHeaders(),
+      }
     );
   }
 }

@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
 
 import { ThemeProvider } from "@/components/theme-provider";
@@ -8,6 +8,42 @@ import { FolderOpen } from "lucide-react";
 import "./index.css";
 
 export function DownloaderApp() {
+  const [url, setUrl] = useState("");
+  // Store title and cookies for future download implementation
+  // These will be used when implementing the actual download functionality
+  const [_title, setTitle] = useState<string | null>(null);
+  const [_cookies, setCookies] = useState<{
+    msToken?: string | null;
+    ttChainToken?: string | null;
+  } | null>(null);
+
+  useEffect(() => {
+    // Listen for download request from main process
+    if (window?.ipcRenderer) {
+      const handleDownloadRequest = (
+        _event: unknown,
+        data: {
+          url: string;
+          title?: string | null;
+          cookies?: {
+            msToken?: string | null;
+            ttChainToken?: string | null;
+          } | null;
+        }
+      ) => {
+        setUrl(data.url);
+        setTitle(data.title || null);
+        setCookies(data.cookies || null);
+      };
+
+      window.ipcRenderer.on("download-request", handleDownloadRequest);
+
+      return () => {
+        window.ipcRenderer?.off("download-request", handleDownloadRequest);
+      };
+    }
+  }, []);
+
   return (
     <div className="flex h-screen w-screen flex-col items-center gap-4 bg-background p-0 text-sm select-none">
       <header className="flex w-full items-center justify-between border-b border-border bg-muted/40 px-4 py-2 text-xs font-semibold uppercase tracking-wide drag-css">
@@ -38,6 +74,7 @@ export function DownloaderApp() {
         <Input
           id="download-input"
           disabled
+          value={url}
           placeholder="https://example.com/video"
           className="h-9 text-xs"
         />

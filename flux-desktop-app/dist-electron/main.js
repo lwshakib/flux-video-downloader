@@ -44,7 +44,6 @@ const ensureSettingsFile = async () => {
 };
 process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, "public") : RENDERER_DIST;
 const downloaderUrl = VITE_DEV_SERVER_URL ? `${VITE_DEV_SERVER_URL}/downloader.html` : path.join(RENDERER_DIST, "downloader.html");
-let downloaderWindow;
 let win;
 function createWindow() {
   win = new BrowserWindow({
@@ -62,37 +61,7 @@ function createWindow() {
       contextIsolation: true
     }
   });
-  downloaderWindow = new BrowserWindow({
-    width: 600,
-    height: 300,
-    minWidth: 600,
-    maxWidth: 600,
-    minHeight: 300,
-    maxHeight: 300,
-    resizable: false,
-    show: false,
-    autoHideMenuBar: true,
-    center: true,
-    title: "Flux Downloader",
-    frame: false,
-    icon: iconPath,
-    webPreferences: {
-      preload: path.join(__dirname$1, "preload.mjs"),
-      sandbox: true,
-      contextIsolation: true
-    }
-  });
   win.webContents.openDevTools();
-  downloaderWindow.on("ready-to-show", () => {
-    downloaderWindow == null ? void 0 : downloaderWindow.show();
-  });
-  downloaderWindow.webContents.openDevTools();
-  downloaderWindow.webContents.on("did-finish-load", () => {
-    downloaderWindow == null ? void 0 : downloaderWindow.webContents.send(
-      "main-process-message",
-      (/* @__PURE__ */ new Date()).toLocaleString()
-    );
-  });
   win.on("ready-to-show", () => {
     win == null ? void 0 : win.show();
   });
@@ -101,10 +70,8 @@ function createWindow() {
   });
   if (VITE_DEV_SERVER_URL) {
     win.loadURL(VITE_DEV_SERVER_URL);
-    downloaderWindow.loadURL(downloaderUrl);
   } else {
     win.loadFile(path.join(RENDERER_DIST, "index.html"));
-    downloaderWindow.loadFile(downloaderUrl);
   }
 }
 ipcMain.handle("select-download-location", async () => {
@@ -151,6 +118,53 @@ ipcMain.on("theme-change", (_event, theme) => {
     }
   });
 });
+ipcMain.handle(
+  "start-download",
+  async (_event, payload) => {
+    const newDownloaderWindow = new BrowserWindow({
+      width: 600,
+      height: 300,
+      minWidth: 600,
+      maxWidth: 600,
+      minHeight: 300,
+      maxHeight: 300,
+      resizable: false,
+      show: false,
+      autoHideMenuBar: true,
+      center: true,
+      title: "Flux Downloader",
+      frame: false,
+      icon: iconPath,
+      webPreferences: {
+        preload: path.join(__dirname$1, "preload.mjs"),
+        sandbox: true,
+        contextIsolation: true
+      }
+    });
+    newDownloaderWindow.on("ready-to-show", () => {
+      newDownloaderWindow == null ? void 0 : newDownloaderWindow.show();
+    });
+    newDownloaderWindow.webContents.openDevTools();
+    const sendDownloadData = () => {
+      if (newDownloaderWindow && !newDownloaderWindow.isDestroyed()) {
+        newDownloaderWindow.webContents.send("download-request", {
+          url: payload.url,
+          title: payload.title || null,
+          cookies: payload.cookies || null
+        });
+        newDownloaderWindow.show();
+        newDownloaderWindow.focus();
+      }
+    };
+    if (VITE_DEV_SERVER_URL) {
+      newDownloaderWindow.loadURL(downloaderUrl);
+    } else {
+      newDownloaderWindow.loadFile(path.join(RENDERER_DIST, "downloader.html"));
+    }
+    newDownloaderWindow.webContents.once("did-finish-load", sendDownloadData);
+    return true;
+  }
+);
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
