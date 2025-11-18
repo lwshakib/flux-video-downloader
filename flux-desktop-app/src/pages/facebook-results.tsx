@@ -68,7 +68,7 @@ export function FacebookResults({
     );
   }
 
-  if (!data) {
+  if (!data || !data.resolutions || !Array.isArray(data.resolutions)) {
     return null;
   }
 
@@ -115,15 +115,21 @@ export function FacebookResults({
                   className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 p-3 sm:p-4 rounded-lg border bg-muted/50 hover:bg-muted transition-colors"
                 >
                   <div className="flex-1 flex items-center gap-2 sm:gap-3 flex-wrap min-w-0">
-                    <Badge variant="destructive" className="shrink-0 text-xs">
-                      {resolution.quality}
-                    </Badge>
-                    <span className="text-xs sm:text-sm text-muted-foreground whitespace-nowrap">
-                      {resolution.width} × {resolution.height}
-                    </span>
-                    <span className="text-xs sm:text-sm text-muted-foreground/70 whitespace-nowrap">
-                      {resolution.format.toUpperCase()}
-                    </span>
+                    {resolution.quality && (
+                      <Badge variant="destructive" className="shrink-0 text-xs">
+                        {resolution.quality}
+                      </Badge>
+                    )}
+                    {(resolution.width && resolution.height) && (
+                      <span className="text-xs sm:text-sm text-muted-foreground whitespace-nowrap">
+                        {resolution.width} × {resolution.height}
+                      </span>
+                    )}
+                    {resolution.format && (
+                      <span className="text-xs sm:text-sm text-muted-foreground/70 whitespace-nowrap">
+                        {resolution.format.toUpperCase()}
+                      </span>
+                    )}
                   </div>
                   <Button
                     size="sm"

@@ -206,8 +206,17 @@ ipcMain.handle(
         absoluteFilePath = path.join(homeDir, normalizedPath);
       }
       absoluteFilePath = path.normalize(absoluteFilePath);
-      const dir = path.dirname(absoluteFilePath);
-      await fs.mkdir(dir, { recursive: true });
+      const finalDir = path.dirname(absoluteFilePath);
+      await fs.mkdir(finalDir, { recursive: true });
+      const tempDir = path.join(os.tmpdir(), "flux-downloads");
+      await fs.mkdir(tempDir, { recursive: true });
+      const fileName = path.basename(absoluteFilePath);
+      const fileExt = path.extname(fileName);
+      const fileBase = path.basename(fileName, fileExt);
+      const tempFilePath = path.join(
+        tempDir,
+        `${fileBase}-${Date.now()}${fileExt}`
+      );
       if (payload.cookies && (payload.cookies.msToken || payload.cookies.ttChainToken)) {
         const urlObj = new URL(payload.url);
         const domain = urlObj.hostname;
@@ -257,7 +266,7 @@ ipcMain.handle(
           const itemBaseUrl = itemUrl.split("?")[0];
           if (itemUrl === payload.url || itemBaseUrl === baseUrl) {
             activeDownloads.set(window.id, item);
-            item.setSavePath(absoluteFilePath);
+            item.setSavePath(tempFilePath);
             item.on("updated", () => {
               const total = item.getTotalBytes();
               const received = item.getReceivedBytes();
@@ -280,14 +289,52 @@ ipcMain.handle(
               if (state === "completed") {
                 if (!downloadResolved) {
                   downloadResolved = true;
-                  window.webContents.send("download-complete", {
-                    filePath: absoluteFilePath
-                  });
+                  (async () => {
+                    try {
+                      let finalPath = absoluteFilePath;
+                      let counter = 1;
+                      let fileExists = true;
+                      while (fileExists) {
+                        try {
+                          await fs.access(finalPath);
+                          const dir = path.dirname(absoluteFilePath);
+                          const ext = path.extname(absoluteFilePath);
+                          const base = path.basename(absoluteFilePath, ext);
+                          finalPath = path.join(
+                            dir,
+                            `${base} (${counter})${ext}`
+                          );
+                          counter++;
+                        } catch {
+                          fileExists = false;
+                        }
+                      }
+                      await fs.copyFile(tempFilePath, finalPath);
+                      try {
+                        await fs.unlink(tempFilePath);
+                      } catch {
+                      }
+                      window.webContents.send("download-complete", {
+                        filePath: finalPath
+                      });
+                    } catch (copyError) {
+                      const errorMessage = copyError instanceof Error ? copyError.message : "Failed to copy file to final location";
+                      window.webContents.send("download-error", {
+                        error: errorMessage
+                      });
+                    }
+                  })();
                   resolve({ success: true, filePath: absoluteFilePath });
                 }
               } else {
                 if (!downloadResolved) {
                   downloadResolved = true;
+                  (async () => {
+                    try {
+                      await fs.unlink(tempFilePath);
+                    } catch {
+                    }
+                  })();
                   const error = `Download failed: ${state}`;
                   window.webContents.send("download-error", { error });
                   resolve({ success: false, error });
@@ -302,6 +349,12 @@ ipcMain.handle(
           if (!downloadResolved) {
             downloadResolved = true;
             windowSession.removeListener("will-download", willDownloadHandler);
+            (async () => {
+              try {
+                await fs.unlink(tempFilePath);
+              } catch {
+              }
+            })();
             const error = "Download timeout - no download started";
             window.webContents.send("download-error", { error });
             resolve({ success: false, error });

@@ -300,9 +300,22 @@ ipcMain.handle(
       // Normalize the final path (resolve .. and . segments)
       absoluteFilePath = path.normalize(absoluteFilePath);
 
-      // Ensure the directory exists
-      const dir = path.dirname(absoluteFilePath);
-      await fs.mkdir(dir, { recursive: true });
+      // Ensure the final directory exists
+      const finalDir = path.dirname(absoluteFilePath);
+      await fs.mkdir(finalDir, { recursive: true });
+
+      // Create temp directory for downloads
+      const tempDir = path.join(os.tmpdir(), "flux-downloads");
+      await fs.mkdir(tempDir, { recursive: true });
+
+      // Generate temp file path with unique name
+      const fileName = path.basename(absoluteFilePath);
+      const fileExt = path.extname(fileName);
+      const fileBase = path.basename(fileName, fileExt);
+      const tempFilePath = path.join(
+        tempDir,
+        `${fileBase}-${Date.now()}${fileExt}`
+      );
 
       // Only set up cookies for TikTok videos (when cookies are provided)
       if (
@@ -377,9 +390,9 @@ ipcMain.handle(
             // Store the download item for pause/resume functionality
             activeDownloads.set(window.id, item);
 
-            // CRITICAL: Set the save path IMMEDIATELY and SYNCHRONOUSLY
+            // CRITICAL: Set the save path to temp location IMMEDIATELY and SYNCHRONOUSLY
             // This prevents the save dialog from appearing
-            item.setSavePath(absoluteFilePath);
+            item.setSavePath(tempFilePath);
 
             // Track progress
             item.on("updated", () => {
@@ -410,14 +423,74 @@ ipcMain.handle(
               if (state === "completed") {
                 if (!downloadResolved) {
                   downloadResolved = true;
-                  window.webContents.send("download-complete", {
-                    filePath: absoluteFilePath,
-                  });
+
+                  // Copy file from temp to final location
+                  (async () => {
+                    try {
+                      // Handle file name conflicts by adding a number suffix
+                      let finalPath = absoluteFilePath;
+                      let counter = 1;
+                      let fileExists = true;
+
+                      while (fileExists) {
+                        try {
+                          await fs.access(finalPath);
+                          // File exists, try with a number suffix
+                          const dir = path.dirname(absoluteFilePath);
+                          const ext = path.extname(absoluteFilePath);
+                          const base = path.basename(absoluteFilePath, ext);
+                          finalPath = path.join(
+                            dir,
+                            `${base} (${counter})${ext}`
+                          );
+                          counter++;
+                        } catch {
+                          // File doesn't exist, we can use this path
+                          fileExists = false;
+                        }
+                      }
+
+                      // Copy from temp to final location
+                      await fs.copyFile(tempFilePath, finalPath);
+
+                      // Clean up temp file
+                      try {
+                        await fs.unlink(tempFilePath);
+                      } catch {
+                        // Ignore cleanup errors
+                      }
+
+                      // Send completion message after file is copied
+                      window.webContents.send("download-complete", {
+                        filePath: finalPath,
+                      });
+                    } catch (copyError) {
+                      const errorMessage =
+                        copyError instanceof Error
+                          ? copyError.message
+                          : "Failed to copy file to final location";
+                      window.webContents.send("download-error", {
+                        error: errorMessage,
+                      });
+                    }
+                  })();
+
+                  // Resolve immediately (copy happens async)
                   resolve({ success: true, filePath: absoluteFilePath });
                 }
               } else {
                 if (!downloadResolved) {
                   downloadResolved = true;
+
+                  // Clean up temp file on failure
+                  (async () => {
+                    try {
+                      await fs.unlink(tempFilePath);
+                    } catch {
+                      // Ignore cleanup errors
+                    }
+                  })();
+
                   const error = `Download failed: ${state}`;
                   window.webContents.send("download-error", { error });
                   resolve({ success: false, error });
@@ -439,6 +512,16 @@ ipcMain.handle(
             downloadResolved = true;
             // Clean up listener on timeout
             windowSession.removeListener("will-download", willDownloadHandler);
+
+            // Clean up temp file on timeout
+            (async () => {
+              try {
+                await fs.unlink(tempFilePath);
+              } catch {
+                // Ignore cleanup errors
+              }
+            })();
+
             const error = "Download timeout - no download started";
             window.webContents.send("download-error", { error });
             resolve({ success: false, error });
