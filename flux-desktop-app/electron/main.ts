@@ -115,9 +115,15 @@ function createWindow() {
     },
   });
 
+  // Open DevTools for main window
+  win.webContents.openDevTools();
+
   downloaderWindow.on("ready-to-show", () => {
     downloaderWindow?.show();
   });
+
+  // Open DevTools for downloader window
+  downloaderWindow.webContents.openDevTools();
 
   downloaderWindow.webContents.on("did-finish-load", () => {
     downloaderWindow?.webContents.send(

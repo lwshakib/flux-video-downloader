@@ -10,6 +10,16 @@ const RAPID_API_HOST = "yt-api.p.rapidapi.com";
 const DEFAULT_COUNTRY_CODE = "BD";
 const RAPID_API_KEY = process.env.RAPID_API_KEY;
 
+// CORS headers helper
+function getCorsHeaders() {
+  return {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Max-Age": "86400",
+  };
+}
+
 function extractYouTubeId(input?: string | null) {
   if (!input) return null;
   const trimmed = input.trim();
@@ -46,6 +56,14 @@ function extractYouTubeId(input?: string | null) {
   return match ? match[1] : null;
 }
 
+// Handle OPTIONS request for CORS preflight
+export async function OPTIONS() {
+  return new NextResponse(null, {
+    status: 200,
+    headers: getCorsHeaders(),
+  });
+}
+
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as CrawlRequestBody;
@@ -54,7 +72,10 @@ export async function POST(request: Request) {
     if (!url) {
       return NextResponse.json(
         { error: "URL is required and must be a non-empty string." },
-        { status: 400 }
+        { 
+          status: 400,
+          headers: getCorsHeaders(),
+        }
       );
     }
 
@@ -62,11 +83,14 @@ export async function POST(request: Request) {
     if (!videoId) {
       return NextResponse.json(
         { error: "Unable to determine a valid YouTube video ID from the URL." },
-        { status: 422 }
+        { 
+          status: 422,
+          headers: getCorsHeaders(),
+        }
       );
     }
 
-    const rapidApiKey = RAPID_API_KEY 
+    const rapidApiKey = RAPID_API_KEY;
 
     if (!rapidApiKey) {
       return NextResponse.json(
@@ -74,7 +98,10 @@ export async function POST(request: Request) {
           error:
             "RapidAPI key is not configured. Please set RAPID_API_KEY.",
         },
-        { status: 500 }
+        { 
+          status: 500,
+          headers: getCorsHeaders(),
+        }
       );
     }
 
@@ -186,13 +213,18 @@ export async function POST(request: Request) {
       )
       .filter(Boolean);
 
-    return NextResponse.json({
-      status: "ok",
-      videoId,
-      title: responseData.title ?? null,
-      thumbnail: primaryThumbnail,
-      resolutions,
-    });
+    return NextResponse.json(
+      {
+        status: "ok",
+        videoId,
+        title: responseData.title ?? null,
+        thumbnail: primaryThumbnail,
+        resolutions,
+      },
+      {
+        headers: getCorsHeaders(),
+      }
+    );
   } catch (error) {
     console.error("YouTube crawl error:", error);
     const message =
@@ -202,6 +234,12 @@ export async function POST(request: Request) {
         ? error.message
         : "Internal server error.";
 
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json(
+      { error: message },
+      { 
+        status: 500,
+        headers: getCorsHeaders(),
+      }
+    );
   }
 }

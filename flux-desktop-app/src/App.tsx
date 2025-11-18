@@ -2,24 +2,14 @@ import { useEffect, useMemo, useState } from "react";
 
 import { AppSidebar } from "@/components/app-sidebar";
 import { ModeToggle } from "@/components/mode-toggle";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import {
   SidebarInset,
   SidebarProvider,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
-
-const contentMap: Record<string, string> = {
-  home: "Welcome to Flux Video Downloader. Choose a platform to get started.",
-  youtube: "Download videos from YouTube with a single click.",
-  facebook: "Fetch public Facebook videos quickly.",
-  "facebook-private-video":
-    "Provide the private URL and we will fetch the video for you.",
-  tiktok: "Save TikTok videos by pasting their link here.",
-  settings: "Manage preferences, usage limits, and integrations.",
-};
+import { contentMap, crawlerPages } from "@/constants/content";
+import { CrawlerPage, HomePage, SettingsPage } from "@/pages";
 
 type AppSettings = {
   downloadLocation: string;
@@ -33,38 +23,46 @@ function App() {
   const [activeProject, setActiveProject] = useState("home");
   const [searchValue, setSearchValue] = useState("");
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
-  const [isChoosingLocation, setIsChoosingLocation] = useState(false);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const content = useMemo(
     () => contentMap[activeProject] ?? contentMap.home,
     [activeProject]
   );
   const isHome = activeProject === "home";
-  const hasCrawler = [
-    "youtube",
-    "facebook",
-    "facebook-private-video",
-    "tiktok",
-  ].includes(activeProject);
+  const hasCrawler = crawlerPages.includes(activeProject);
   const isSettings = activeProject === "settings";
 
-  const handleBrowseLocation = async () => {
-    if (!window?.ipcRenderer) return;
-    try {
-      setIsChoosingLocation(true);
-      const selectedPath: string | null = await window.ipcRenderer.invoke(
-        "select-download-location"
-      );
-      if (selectedPath) {
-        setSettings((prev) => ({
-          ...prev,
-          downloadLocation: selectedPath,
-        }));
+  const handleCrawl = async (url: string) => {
+    if (activeProject === "youtube") {
+      const apiUrl = import.meta.env.VITE_WEB_API_URL;
+      if (!apiUrl) {
+        console.error("VITE_WEB_API_URL is not defined");
+        return;
       }
-    } catch (error) {
-      console.error("Failed to select download location", error);
-    } finally {
-      setIsChoosingLocation(false);
+
+      try {
+        const response = await fetch(`${apiUrl}/crawl/youtube`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ url }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+        console.log("Crawl response:", data);
+        // TODO: Handle the response (e.g., show success message, open downloader window)
+      } catch (error) {
+        console.error("Failed to crawl YouTube video:", error);
+        throw error;
+      }
+    } else {
+      // TODO: Implement other platforms
+      console.log(`Crawling ${activeProject}:`, url);
     }
   };
 
@@ -113,20 +111,10 @@ function App() {
       .invoke("save-settings", settings)
       .catch((error) => console.error("Failed to save settings", error));
   }, [settings, settingsLoaded]);
-  const homeFeatures = [
-    {
-      title: "Multi-platform support",
-      description: "Download content from YouTube, Facebook, TikTok and more.",
-    },
-    {
-      title: "Private video handling",
-      description: "Secure helpers guide you through fetching private videos.",
-    },
-    {
-      title: "Lightning fast conversions",
-      description: "Optimized pipeline delivers MP4s without waiting around.",
-    },
-  ];
+
+  const handleSettingsChange = (newSettings: AppSettings) => {
+    setSettings(newSettings);
+  };
 
   return (
     <SidebarProvider>
@@ -174,87 +162,18 @@ function App() {
             </h2>
             <p className="mt-2 text-muted-foreground">{content}</p>
             {hasCrawler && (
-              <form className="mt-6 flex flex-col gap-3 md:flex-row">
-                <Input
-                  value={searchValue}
-                  onChange={(event) => setSearchValue(event.target.value)}
-                  placeholder="Paste the video URL here"
-                  className="h-11 flex-1"
-                />
-                <Button
-                  type="button"
-                  className="h-11"
-                  disabled={!searchValue.trim()}
-                >
-                  Crawl
-                </Button>
-              </form>
+              <CrawlerPage
+                searchValue={searchValue}
+                onSearchValueChange={setSearchValue}
+                onCrawl={handleCrawl}
+              />
             )}
-            {isHome && (
-              <>
-                <div className="mt-6 grid gap-4 md:grid-cols-3">
-                  {homeFeatures.map((feature) => (
-                    <div
-                      key={feature.title}
-                      className="rounded-lg border border-border bg-background p-4 shadow-sm"
-                    >
-                      <h3 className="text-lg font-semibold">{feature.title}</h3>
-                      <p className="mt-1 text-sm text-muted-foreground">
-                        {feature.description}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-                <div className="mt-6 rounded-lg border border-dashed border-border bg-background/80 p-4 text-sm text-muted-foreground">
-                  Tip: Pick a platform from the sidebar to see its dedicated
-                  workflow.
-                </div>
-              </>
-            )}
+            {isHome && <HomePage />}
             {isSettings && (
-              <div className="mt-6 grid gap-4 md:grid-cols-2">
-                <div className="rounded-lg border border-border bg-background p-4">
-                  <h3 className="text-lg font-semibold">Theme preference</h3>
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    Toggle light or dark mode using the button in the header.
-                  </p>
-                </div>
-                <div className="rounded-lg border border-border bg-background p-4">
-                  <h3 className="text-lg font-semibold">Usage limits</h3>
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    Configure daily crawl quotas and API keys (coming soon).
-                  </p>
-                </div>
-                <div className="rounded-lg border border-border bg-background p-4 md:col-span-2">
-                  <h3 className="text-lg font-semibold">
-                    Default save location
-                  </h3>
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    Choose where downloaded files should be saved.
-                  </p>
-                  <div className="mt-4 flex flex-col gap-2 md:flex-row">
-                    <Input
-                      value={settings.downloadLocation}
-                      onChange={(event) =>
-                        setSettings((prev) => ({
-                          ...prev,
-                          downloadLocation: event.target.value,
-                        }))
-                      }
-                      placeholder="Downloads folder"
-                      className="flex-1"
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={handleBrowseLocation}
-                      disabled={isChoosingLocation}
-                    >
-                      Browse
-                    </Button>
-                  </div>
-                </div>
-              </div>
+              <SettingsPage
+                settings={settings}
+                onSettingsChange={handleSettingsChange}
+              />
             )}
           </div>
         </div>

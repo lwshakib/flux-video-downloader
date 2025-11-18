@@ -82,9 +82,11 @@ function createWindow() {
       contextIsolation: true
     }
   });
+  win.webContents.openDevTools();
   downloaderWindow.on("ready-to-show", () => {
     downloaderWindow == null ? void 0 : downloaderWindow.show();
   });
+  downloaderWindow.webContents.openDevTools();
   downloaderWindow.webContents.on("did-finish-load", () => {
     downloaderWindow == null ? void 0 : downloaderWindow.webContents.send(
       "main-process-message",
