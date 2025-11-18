@@ -150,11 +150,9 @@ ipcMain.handle(
     const newDownloaderWindow = new BrowserWindow({
       width: 600,
       height: 300,
-      minWidth: 600,
-      maxWidth: 600,
-      minHeight: 300,
-      maxHeight: 300,
-      resizable: false,
+      minWidth: 400,
+      minHeight: 250,
+      resizable: true,
       show: false,
       autoHideMenuBar: true,
       center: true,
@@ -170,6 +168,7 @@ ipcMain.handle(
     newDownloaderWindow.on("ready-to-show", () => {
       newDownloaderWindow == null ? void 0 : newDownloaderWindow.show();
     });
+    newDownloaderWindow.webContents.openDevTools();
     const sendDownloadData = () => {
       if (newDownloaderWindow && !newDownloaderWindow.isDestroyed()) {
         newDownloaderWindow.webContents.send("download-request", {
@@ -190,14 +189,71 @@ ipcMain.handle(
     return true;
   }
 );
+const MAX_REDIRECTS = 5;
+const BASE_HEADERS = {
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  Accept: "*/*",
+  "Accept-Language": "en-US,en;q=0.9",
+  Connection: "keep-alive",
+  Referer: "https://www.tiktok.com/"
+};
+function buildCookieHeader(msToken, ttChainToken) {
+  const parts = [];
+  if (msToken) {
+    parts.push(`msToken=${msToken}`);
+  }
+  if (ttChainToken) {
+    parts.push(`tt_chain_token=${ttChainToken}`);
+  }
+  return parts.join("; ");
+}
+async function fetchWithCookies(url, cookieHeader, attempt = 1) {
+  var _a;
+  if (attempt > MAX_REDIRECTS) {
+    throw new Error("Too many redirects while downloading the video.");
+  }
+  const parsed = new URL(url);
+  const headers = new Headers({
+    ...BASE_HEADERS,
+    Host: parsed.hostname
+  });
+  if (!cookieHeader) {
+    throw new Error(
+      "TikTok cookie header could not be constructed from TikTok response."
+    );
+  }
+  headers.set("Cookie", cookieHeader);
+  const response = await fetch(url, {
+    headers,
+    redirect: "manual"
+  });
+  if (response.status >= 300 && response.status < 400 && response.headers.get("location")) {
+    const nextUrl = new URL(response.headers.get("location"), url);
+    (_a = response.body) == null ? void 0 : _a.cancel();
+    return fetchWithCookies(nextUrl.toString(), cookieHeader, attempt + 1);
+  }
+  if (!response.ok) {
+    const errorBody = await response.text().catch(() => "");
+    throw new Error(
+      `Download failed with status ${response.status}. ${errorBody}`
+    );
+  }
+  return response;
+}
 ipcMain.handle(
   "download-file",
   async (event, payload) => {
+    var _a, _b;
     const window = BrowserWindow.fromWebContents(event.sender);
     if (!window || window.isDestroyed()) {
+      console.error("Download error: Window not found");
       return { success: false, error: "Window not found" };
     }
     try {
+      console.log("Download started:", {
+        url: payload.url.substring(0, 100) + "...",
+        hasCookies: !!(((_a = payload.cookies) == null ? void 0 : _a.msToken) || ((_b = payload.cookies) == null ? void 0 : _b.ttChainToken))
+      });
       const windowSession = window.webContents.session;
       const normalizedPath = payload.filePath.replace(/\//g, path.sep);
       let absoluteFilePath = normalizedPath;
@@ -217,46 +273,96 @@ ipcMain.handle(
         tempDir,
         `${fileBase}-${Date.now()}${fileExt}`
       );
-      if (payload.cookies && (payload.cookies.msToken || payload.cookies.ttChainToken)) {
-        const urlObj = new URL(payload.url);
-        const domain = urlObj.hostname;
-        if (payload.cookies.msToken) {
-          await windowSession.cookies.set({
-            url: payload.url,
-            name: "msToken",
-            value: payload.cookies.msToken,
-            domain
-          });
-        }
-        if (payload.cookies.ttChainToken) {
-          await windowSession.cookies.set({
-            url: payload.url,
-            name: "tt-chain-token",
-            value: payload.cookies.ttChainToken,
-            domain
-          });
-        }
-        const interceptorHandler = (details, callback) => {
-          var _a, _b;
-          const headers = { ...details.requestHeaders };
-          const cookieParts = [];
-          if ((_a = payload.cookies) == null ? void 0 : _a.msToken) {
-            cookieParts.push(`msToken=${payload.cookies.msToken}`);
-          }
-          if ((_b = payload.cookies) == null ? void 0 : _b.ttChainToken) {
-            cookieParts.push(`tt-chain-token=${payload.cookies.ttChainToken}`);
-          }
-          if (cookieParts.length > 0) {
-            headers["Cookie"] = cookieParts.join("; ");
-          }
-          callback({ requestHeaders: headers });
-        };
-        windowSession.webRequest.onBeforeSendHeaders(
-          {
-            urls: [payload.url]
-          },
-          interceptorHandler
+      const isTikTokDownload = payload.cookies && (payload.cookies.msToken || payload.cookies.ttChainToken);
+      if (isTikTokDownload && payload.cookies) {
+        console.log("Using fetch-based download for TikTok video");
+        const cookieHeader = buildCookieHeader(
+          payload.cookies.msToken,
+          payload.cookies.ttChainToken
         );
+        console.log("Cookie header built:", cookieHeader ? "Yes" : "No");
+        try {
+          const response = await fetchWithCookies(payload.url, cookieHeader);
+          console.log("Fetch response received:", {
+            status: response.status,
+            contentType: response.headers.get("content-type")
+          });
+          const contentLength = response.headers.get("content-length");
+          const totalBytes = contentLength ? parseInt(contentLength, 10) : 0;
+          const fileHandle = await fs.open(tempFilePath, "w");
+          const body = response.body;
+          if (!body) {
+            await fileHandle.close();
+            throw new Error("Response body is null");
+          }
+          let receivedBytes = 0;
+          let position = 0;
+          const reader = body.getReader();
+          try {
+            let reading = true;
+            while (reading) {
+              const { done, value } = await reader.read();
+              if (done) {
+                reading = false;
+                break;
+              }
+              if (value) {
+                const buffer = Buffer.from(value);
+                await fileHandle.write(buffer, 0, buffer.length, position);
+                position += buffer.length;
+                receivedBytes += buffer.length;
+                if (totalBytes > 0) {
+                  const percent = Math.round(
+                    receivedBytes / totalBytes * 100
+                  );
+                  window.webContents.send("download-progress", {
+                    percent: isNaN(percent) ? 0 : percent,
+                    received: receivedBytes,
+                    total: totalBytes
+                  });
+                }
+              }
+            }
+          } finally {
+            await fileHandle.close();
+          }
+          console.log("Download completed, copying to final location");
+          let finalPath = absoluteFilePath;
+          let counter = 1;
+          let fileExists = true;
+          while (fileExists) {
+            try {
+              await fs.access(finalPath);
+              const dir = path.dirname(absoluteFilePath);
+              const ext = path.extname(absoluteFilePath);
+              const base = path.basename(absoluteFilePath, ext);
+              finalPath = path.join(dir, `${base} (${counter})${ext}`);
+              counter++;
+            } catch {
+              fileExists = false;
+            }
+          }
+          await fs.copyFile(tempFilePath, finalPath);
+          console.log("File copied to:", finalPath);
+          try {
+            await fs.unlink(tempFilePath);
+          } catch (cleanupError) {
+            console.warn("Failed to cleanup temp file:", cleanupError);
+          }
+          window.webContents.send("download-complete", {
+            filePath: finalPath
+          });
+          return { success: true, filePath: finalPath };
+        } catch (fetchError) {
+          const errorMessage = fetchError instanceof Error ? fetchError.message : "Failed to download TikTok video";
+          console.error("TikTok download error:", errorMessage, fetchError);
+          window.webContents.send("download-error", { error: errorMessage });
+          try {
+            await fs.unlink(tempFilePath);
+          } catch {
+          }
+          return { success: false, error: errorMessage };
+        }
       }
       return new Promise((resolve) => {
         let downloadResolved = false;
@@ -289,6 +395,7 @@ ipcMain.handle(
               if (state === "completed") {
                 if (!downloadResolved) {
                   downloadResolved = true;
+                  console.log("Download completed, copying to final location");
                   (async () => {
                     try {
                       let finalPath = absoluteFilePath;
@@ -310,15 +417,21 @@ ipcMain.handle(
                         }
                       }
                       await fs.copyFile(tempFilePath, finalPath);
+                      console.log("File copied to:", finalPath);
                       try {
                         await fs.unlink(tempFilePath);
-                      } catch {
+                      } catch (cleanupError) {
+                        console.warn(
+                          "Failed to cleanup temp file:",
+                          cleanupError
+                        );
                       }
                       window.webContents.send("download-complete", {
                         filePath: finalPath
                       });
                     } catch (copyError) {
                       const errorMessage = copyError instanceof Error ? copyError.message : "Failed to copy file to final location";
+                      console.error("Copy error:", errorMessage, copyError);
                       window.webContents.send("download-error", {
                         error: errorMessage
                       });
@@ -329,13 +442,18 @@ ipcMain.handle(
               } else {
                 if (!downloadResolved) {
                   downloadResolved = true;
+                  const error = `Download failed: ${state}`;
+                  console.error("Download failed:", error);
                   (async () => {
                     try {
                       await fs.unlink(tempFilePath);
-                    } catch {
+                    } catch (cleanupError) {
+                      console.warn(
+                        "Failed to cleanup temp file on error:",
+                        cleanupError
+                      );
                     }
                   })();
-                  const error = `Download failed: ${state}`;
                   window.webContents.send("download-error", { error });
                   resolve({ success: false, error });
                 }
@@ -356,6 +474,7 @@ ipcMain.handle(
               }
             })();
             const error = "Download timeout - no download started";
+            console.error("Download timeout:", error);
             window.webContents.send("download-error", { error });
             resolve({ success: false, error });
           }
@@ -363,6 +482,7 @@ ipcMain.handle(
       });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      console.error("Download error:", errorMessage, error);
       window.webContents.send("download-error", { error: errorMessage });
       return { success: false, error: errorMessage };
     }

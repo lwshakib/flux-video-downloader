@@ -214,11 +214,9 @@ ipcMain.handle(
     const newDownloaderWindow = new BrowserWindow({
       width: 600,
       height: 300,
-      minWidth: 600,
-      maxWidth: 600,
-      minHeight: 300,
-      maxHeight: 300,
-      resizable: false,
+      minWidth: 400,
+      minHeight: 250,
+      resizable: true,
       show: false,
       autoHideMenuBar: true,
       center: true,
@@ -235,6 +233,9 @@ ipcMain.handle(
     newDownloaderWindow.on("ready-to-show", () => {
       newDownloaderWindow?.show();
     });
+
+    // Open DevTools for downloader window
+    newDownloaderWindow.webContents.openDevTools();
 
     // Wait for the window to be ready, then send download data
     const sendDownloadData = () => {
@@ -263,6 +264,80 @@ ipcMain.handle(
   }
 );
 
+// TikTok download helper - uses fetch with manual redirect handling (like route.ts)
+const MAX_REDIRECTS = 5;
+
+const BASE_HEADERS = {
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  Accept: "*/*",
+  "Accept-Language": "en-US,en;q=0.9",
+  Connection: "keep-alive",
+  Referer: "https://www.tiktok.com/",
+};
+
+function buildCookieHeader(
+  msToken?: string | null,
+  ttChainToken?: string | null
+) {
+  const parts: string[] = [];
+  if (msToken) {
+    parts.push(`msToken=${msToken}`);
+  }
+  if (ttChainToken) {
+    parts.push(`tt_chain_token=${ttChainToken}`);
+  }
+  return parts.join("; ");
+}
+
+async function fetchWithCookies(
+  url: string,
+  cookieHeader: string,
+  attempt = 1
+): Promise<Response> {
+  if (attempt > MAX_REDIRECTS) {
+    throw new Error("Too many redirects while downloading the video.");
+  }
+
+  const parsed = new URL(url);
+  const headers = new Headers({
+    ...BASE_HEADERS,
+    Host: parsed.hostname,
+  });
+
+  if (!cookieHeader) {
+    throw new Error(
+      "TikTok cookie header could not be constructed from TikTok response."
+    );
+  }
+
+  headers.set("Cookie", cookieHeader);
+
+  const response = await fetch(url, {
+    headers,
+    redirect: "manual",
+  });
+
+  if (
+    response.status >= 300 &&
+    response.status < 400 &&
+    response.headers.get("location")
+  ) {
+    const nextUrl = new URL(response.headers.get("location") as string, url);
+    response.body?.cancel();
+    return fetchWithCookies(nextUrl.toString(), cookieHeader, attempt + 1);
+  }
+
+  if (!response.ok) {
+    const errorBody = await response.text().catch(() => "");
+    throw new Error(
+      `Download failed with status ${response.status}. ${errorBody}`
+    );
+  }
+
+  return response;
+}
+
 // Handle actual file download with progress
 ipcMain.handle(
   "download-file",
@@ -279,10 +354,18 @@ ipcMain.handle(
   ) => {
     const window = BrowserWindow.fromWebContents(event.sender);
     if (!window || window.isDestroyed()) {
+      console.error("Download error: Window not found");
       return { success: false, error: "Window not found" };
     }
 
     try {
+      console.log("Download started:", {
+        url: payload.url.substring(0, 100) + "...",
+        hasCookies: !!(
+          payload.cookies?.msToken || payload.cookies?.ttChainToken
+        ),
+      });
+
       // Get the window's session
       const windowSession = window.webContents.session;
 
@@ -317,61 +400,135 @@ ipcMain.handle(
         `${fileBase}-${Date.now()}${fileExt}`
       );
 
-      // Only set up cookies for TikTok videos (when cookies are provided)
-      if (
+      // For TikTok videos with cookies, use fetch-based download (like route.ts)
+      // This handles redirects properly which downloadURL might not
+      const isTikTokDownload =
         payload.cookies &&
-        (payload.cookies.msToken || payload.cookies.ttChainToken)
-      ) {
-        const urlObj = new URL(payload.url);
-        const domain = urlObj.hostname;
+        (payload.cookies.msToken || payload.cookies.ttChainToken);
 
-        // Set cookies in the session
-        if (payload.cookies.msToken) {
-          await windowSession.cookies.set({
-            url: payload.url,
-            name: "msToken",
-            value: payload.cookies.msToken,
-            domain: domain,
-          });
-        }
-        if (payload.cookies.ttChainToken) {
-          await windowSession.cookies.set({
-            url: payload.url,
-            name: "tt-chain-token",
-            value: payload.cookies.ttChainToken,
-            domain: domain,
-          });
-        }
-
-        // Set up request interceptor to add cookies to headers
-        const interceptorHandler = (
-          details: Electron.OnBeforeSendHeadersListenerDetails,
-          callback: (response: {
-            requestHeaders?: Record<string, string>;
-          }) => void
-        ) => {
-          const headers = { ...details.requestHeaders };
-          const cookieParts: string[] = [];
-          if (payload.cookies?.msToken) {
-            cookieParts.push(`msToken=${payload.cookies.msToken}`);
-          }
-          if (payload.cookies?.ttChainToken) {
-            cookieParts.push(`tt-chain-token=${payload.cookies.ttChainToken}`);
-          }
-          if (cookieParts.length > 0) {
-            headers["Cookie"] = cookieParts.join("; ");
-          }
-          callback({ requestHeaders: headers });
-        };
-
-        windowSession.webRequest.onBeforeSendHeaders(
-          {
-            urls: [payload.url],
-          },
-          interceptorHandler
+      if (isTikTokDownload && payload.cookies) {
+        console.log("Using fetch-based download for TikTok video");
+        const cookieHeader = buildCookieHeader(
+          payload.cookies.msToken,
+          payload.cookies.ttChainToken
         );
+        console.log("Cookie header built:", cookieHeader ? "Yes" : "No");
+
+        try {
+          // Fetch with cookies and manual redirect handling
+          const response = await fetchWithCookies(payload.url, cookieHeader);
+          console.log("Fetch response received:", {
+            status: response.status,
+            contentType: response.headers.get("content-type"),
+          });
+
+          // Get content length for progress tracking
+          const contentLength = response.headers.get("content-length");
+          const totalBytes = contentLength ? parseInt(contentLength, 10) : 0;
+
+          // Write to temp file with progress tracking
+          const fileHandle = await fs.open(tempFilePath, "w");
+          const body = response.body;
+          if (!body) {
+            await fileHandle.close();
+            throw new Error("Response body is null");
+          }
+
+          let receivedBytes = 0;
+          let position = 0;
+          const reader = body.getReader();
+
+          try {
+            let reading = true;
+            while (reading) {
+              const { done, value } = await reader.read();
+              if (done) {
+                reading = false;
+                break;
+              }
+
+              if (value) {
+                const buffer = Buffer.from(value);
+                await fileHandle.write(buffer, 0, buffer.length, position);
+                position += buffer.length;
+                receivedBytes += buffer.length;
+
+                // Send progress update
+                if (totalBytes > 0) {
+                  const percent = Math.round(
+                    (receivedBytes / totalBytes) * 100
+                  );
+                  window.webContents.send("download-progress", {
+                    percent: isNaN(percent) ? 0 : percent,
+                    received: receivedBytes,
+                    total: totalBytes,
+                  });
+                }
+              }
+            }
+          } finally {
+            await fileHandle.close();
+          }
+
+          console.log("Download completed, copying to final location");
+
+          // Handle file name conflicts by adding a number suffix
+          let finalPath = absoluteFilePath;
+          let counter = 1;
+          let fileExists = true;
+
+          while (fileExists) {
+            try {
+              await fs.access(finalPath);
+              // File exists, try with a number suffix
+              const dir = path.dirname(absoluteFilePath);
+              const ext = path.extname(absoluteFilePath);
+              const base = path.basename(absoluteFilePath, ext);
+              finalPath = path.join(dir, `${base} (${counter})${ext}`);
+              counter++;
+            } catch {
+              // File doesn't exist, we can use this path
+              fileExists = false;
+            }
+          }
+
+          // Copy from temp to final location
+          await fs.copyFile(tempFilePath, finalPath);
+          console.log("File copied to:", finalPath);
+
+          // Clean up temp file
+          try {
+            await fs.unlink(tempFilePath);
+          } catch (cleanupError) {
+            console.warn("Failed to cleanup temp file:", cleanupError);
+          }
+
+          // Send completion message
+          window.webContents.send("download-complete", {
+            filePath: finalPath,
+          });
+
+          return { success: true, filePath: finalPath };
+        } catch (fetchError) {
+          const errorMessage =
+            fetchError instanceof Error
+              ? fetchError.message
+              : "Failed to download TikTok video";
+          console.error("TikTok download error:", errorMessage, fetchError);
+          window.webContents.send("download-error", { error: errorMessage });
+
+          // Clean up temp file on error
+          try {
+            await fs.unlink(tempFilePath);
+          } catch {
+            // Ignore cleanup errors
+          }
+
+          return { success: false, error: errorMessage };
+        }
       }
 
+      // For non-TikTok downloads, use Electron's downloadURL
       return new Promise((resolve) => {
         let downloadResolved = false;
 
@@ -423,6 +580,7 @@ ipcMain.handle(
               if (state === "completed") {
                 if (!downloadResolved) {
                   downloadResolved = true;
+                  console.log("Download completed, copying to final location");
 
                   // Copy file from temp to final location
                   (async () => {
@@ -452,12 +610,16 @@ ipcMain.handle(
 
                       // Copy from temp to final location
                       await fs.copyFile(tempFilePath, finalPath);
+                      console.log("File copied to:", finalPath);
 
                       // Clean up temp file
                       try {
                         await fs.unlink(tempFilePath);
-                      } catch {
-                        // Ignore cleanup errors
+                      } catch (cleanupError) {
+                        console.warn(
+                          "Failed to cleanup temp file:",
+                          cleanupError
+                        );
                       }
 
                       // Send completion message after file is copied
@@ -469,6 +631,7 @@ ipcMain.handle(
                         copyError instanceof Error
                           ? copyError.message
                           : "Failed to copy file to final location";
+                      console.error("Copy error:", errorMessage, copyError);
                       window.webContents.send("download-error", {
                         error: errorMessage,
                       });
@@ -481,17 +644,21 @@ ipcMain.handle(
               } else {
                 if (!downloadResolved) {
                   downloadResolved = true;
+                  const error = `Download failed: ${state}`;
+                  console.error("Download failed:", error);
 
                   // Clean up temp file on failure
                   (async () => {
                     try {
                       await fs.unlink(tempFilePath);
-                    } catch {
-                      // Ignore cleanup errors
+                    } catch (cleanupError) {
+                      console.warn(
+                        "Failed to cleanup temp file on error:",
+                        cleanupError
+                      );
                     }
                   })();
 
-                  const error = `Download failed: ${state}`;
                   window.webContents.send("download-error", { error });
                   resolve({ success: false, error });
                 }
@@ -523,6 +690,7 @@ ipcMain.handle(
             })();
 
             const error = "Download timeout - no download started";
+            console.error("Download timeout:", error);
             window.webContents.send("download-error", { error });
             resolve({ success: false, error });
           }
@@ -531,6 +699,7 @@ ipcMain.handle(
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
+      console.error("Download error:", errorMessage, error);
       window.webContents.send("download-error", { error: errorMessage });
       return { success: false, error: errorMessage };
     }

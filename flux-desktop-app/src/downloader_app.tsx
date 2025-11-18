@@ -110,6 +110,22 @@ export function DownloaderApp() {
         setIsDownloadComplete(false);
         setCompletedFilePath(null);
         setDownloadError(null);
+
+        // Log cookies if present
+        if (
+          data.cookies &&
+          (data.cookies.msToken || data.cookies.ttChainToken)
+        ) {
+          console.log("Download - Cookies received:", {
+            msToken: data.cookies.msToken
+              ? `${data.cookies.msToken.substring(0, 20)}...`
+              : null,
+            ttChainToken: data.cookies.ttChainToken
+              ? `${data.cookies.ttChainToken.substring(0, 20)}...`
+              : null,
+            url: data.url,
+          });
+        }
       };
 
       const handleDownloadProgress = (
