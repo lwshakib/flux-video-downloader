@@ -290,6 +290,44 @@ function buildCookieHeader(
   return parts.join("; ");
 }
 
+// Fetch with manual redirect handling (for YouTube and other videos)
+async function fetchWithRedirects(url: string, attempt = 1): Promise<Response> {
+  if (attempt > MAX_REDIRECTS) {
+    throw new Error("Too many redirects while downloading the video.");
+  }
+
+  const parsed = new URL(url);
+  const headers = new Headers({
+    ...BASE_HEADERS,
+    Host: parsed.hostname,
+  });
+
+  const response = await fetch(url, {
+    headers,
+    redirect: "manual",
+  });
+
+  if (
+    response.status >= 300 &&
+    response.status < 400 &&
+    response.headers.get("location")
+  ) {
+    const nextUrl = new URL(response.headers.get("location") as string, url);
+    console.log(`Redirect ${attempt}: ${url} -> ${nextUrl.toString()}`);
+    response.body?.cancel();
+    return fetchWithRedirects(nextUrl.toString(), attempt + 1);
+  }
+
+  if (!response.ok) {
+    const errorBody = await response.text().catch(() => "");
+    throw new Error(
+      `Download failed with status ${response.status}. ${errorBody}`
+    );
+  }
+
+  return response;
+}
+
 async function fetchWithCookies(
   url: string,
   cookieHeader: string,
@@ -324,6 +362,7 @@ async function fetchWithCookies(
     response.headers.get("location")
   ) {
     const nextUrl = new URL(response.headers.get("location") as string, url);
+    console.log(`TikTok redirect ${attempt}: ${url} -> ${nextUrl.toString()}`);
     response.body?.cancel();
     return fetchWithCookies(nextUrl.toString(), cookieHeader, attempt + 1);
   }
@@ -400,23 +439,47 @@ ipcMain.handle(
         `${fileBase}-${Date.now()}${fileExt}`
       );
 
-      // For TikTok videos with cookies, use fetch-based download (like route.ts)
-      // This handles redirects properly which downloadURL might not
+      // Check if this is a YouTube or TikTok video that needs fetch-based download
+      // YouTube URLs often redirect, and TikTok needs cookies
+      const urlObj = new URL(payload.url);
+      const isYouTube =
+        urlObj.hostname.includes("youtube.com") ||
+        urlObj.hostname.includes("youtu.be") ||
+        urlObj.hostname.includes("googlevideo.com");
       const isTikTokDownload =
         payload.cookies &&
         (payload.cookies.msToken || payload.cookies.ttChainToken);
 
-      if (isTikTokDownload && payload.cookies) {
-        console.log("Using fetch-based download for TikTok video");
-        const cookieHeader = buildCookieHeader(
-          payload.cookies.msToken,
-          payload.cookies.ttChainToken
-        );
-        console.log("Cookie header built:", cookieHeader ? "Yes" : "No");
+      // Use fetch-based download for YouTube (redirects) or TikTok (cookies)
+      if (
+        (isYouTube || isTikTokDownload) &&
+        (!isTikTokDownload || payload.cookies)
+      ) {
+        const downloadType = isYouTube ? "YouTube" : "TikTok";
+        console.log(`Using fetch-based download for ${downloadType} video`);
+
+        // For YouTube, we don't need cookies, but we need to handle redirects
+        // For TikTok, we need cookies
+        let cookieHeader = "";
+        if (isTikTokDownload && payload.cookies) {
+          cookieHeader = buildCookieHeader(
+            payload.cookies.msToken,
+            payload.cookies.ttChainToken
+          );
+          console.log("Cookie header built:", cookieHeader ? "Yes" : "No");
+        }
 
         try {
-          // Fetch with cookies and manual redirect handling
-          const response = await fetchWithCookies(payload.url, cookieHeader);
+          // Fetch with manual redirect handling
+          // For YouTube, we don't need cookies, so use regular fetch with redirect handling
+          // For TikTok, use fetchWithCookies
+          let response: Response;
+          if (isTikTokDownload && cookieHeader) {
+            response = await fetchWithCookies(payload.url, cookieHeader);
+          } else {
+            // For YouTube, use regular fetch but handle redirects manually
+            response = await fetchWithRedirects(payload.url);
+          }
           console.log("Fetch response received:", {
             status: response.status,
             contentType: response.headers.get("content-type"),
@@ -513,8 +576,12 @@ ipcMain.handle(
           const errorMessage =
             fetchError instanceof Error
               ? fetchError.message
-              : "Failed to download TikTok video";
-          console.error("TikTok download error:", errorMessage, fetchError);
+              : `Failed to download ${isYouTube ? "YouTube" : "TikTok"} video`;
+          console.error(
+            `${isYouTube ? "YouTube" : "TikTok"} download error:`,
+            errorMessage,
+            fetchError
+          );
           window.webContents.send("download-error", { error: errorMessage });
 
           // Clean up temp file on error

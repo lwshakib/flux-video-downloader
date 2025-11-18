@@ -207,6 +207,34 @@ function buildCookieHeader(msToken, ttChainToken) {
   }
   return parts.join("; ");
 }
+async function fetchWithRedirects(url, attempt = 1) {
+  var _a;
+  if (attempt > MAX_REDIRECTS) {
+    throw new Error("Too many redirects while downloading the video.");
+  }
+  const parsed = new URL(url);
+  const headers = new Headers({
+    ...BASE_HEADERS,
+    Host: parsed.hostname
+  });
+  const response = await fetch(url, {
+    headers,
+    redirect: "manual"
+  });
+  if (response.status >= 300 && response.status < 400 && response.headers.get("location")) {
+    const nextUrl = new URL(response.headers.get("location"), url);
+    console.log(`Redirect ${attempt}: ${url} -> ${nextUrl.toString()}`);
+    (_a = response.body) == null ? void 0 : _a.cancel();
+    return fetchWithRedirects(nextUrl.toString(), attempt + 1);
+  }
+  if (!response.ok) {
+    const errorBody = await response.text().catch(() => "");
+    throw new Error(
+      `Download failed with status ${response.status}. ${errorBody}`
+    );
+  }
+  return response;
+}
 async function fetchWithCookies(url, cookieHeader, attempt = 1) {
   var _a;
   if (attempt > MAX_REDIRECTS) {
@@ -229,6 +257,7 @@ async function fetchWithCookies(url, cookieHeader, attempt = 1) {
   });
   if (response.status >= 300 && response.status < 400 && response.headers.get("location")) {
     const nextUrl = new URL(response.headers.get("location"), url);
+    console.log(`TikTok redirect ${attempt}: ${url} -> ${nextUrl.toString()}`);
     (_a = response.body) == null ? void 0 : _a.cancel();
     return fetchWithCookies(nextUrl.toString(), cookieHeader, attempt + 1);
   }
@@ -273,16 +302,27 @@ ipcMain.handle(
         tempDir,
         `${fileBase}-${Date.now()}${fileExt}`
       );
+      const urlObj = new URL(payload.url);
+      const isYouTube = urlObj.hostname.includes("youtube.com") || urlObj.hostname.includes("youtu.be") || urlObj.hostname.includes("googlevideo.com");
       const isTikTokDownload = payload.cookies && (payload.cookies.msToken || payload.cookies.ttChainToken);
-      if (isTikTokDownload && payload.cookies) {
-        console.log("Using fetch-based download for TikTok video");
-        const cookieHeader = buildCookieHeader(
-          payload.cookies.msToken,
-          payload.cookies.ttChainToken
-        );
-        console.log("Cookie header built:", cookieHeader ? "Yes" : "No");
+      if ((isYouTube || isTikTokDownload) && (!isTikTokDownload || payload.cookies)) {
+        const downloadType = isYouTube ? "YouTube" : "TikTok";
+        console.log(`Using fetch-based download for ${downloadType} video`);
+        let cookieHeader = "";
+        if (isTikTokDownload && payload.cookies) {
+          cookieHeader = buildCookieHeader(
+            payload.cookies.msToken,
+            payload.cookies.ttChainToken
+          );
+          console.log("Cookie header built:", cookieHeader ? "Yes" : "No");
+        }
         try {
-          const response = await fetchWithCookies(payload.url, cookieHeader);
+          let response;
+          if (isTikTokDownload && cookieHeader) {
+            response = await fetchWithCookies(payload.url, cookieHeader);
+          } else {
+            response = await fetchWithRedirects(payload.url);
+          }
           console.log("Fetch response received:", {
             status: response.status,
             contentType: response.headers.get("content-type")
@@ -354,8 +394,12 @@ ipcMain.handle(
           });
           return { success: true, filePath: finalPath };
         } catch (fetchError) {
-          const errorMessage = fetchError instanceof Error ? fetchError.message : "Failed to download TikTok video";
-          console.error("TikTok download error:", errorMessage, fetchError);
+          const errorMessage = fetchError instanceof Error ? fetchError.message : `Failed to download ${isYouTube ? "YouTube" : "TikTok"} video`;
+          console.error(
+            `${isYouTube ? "YouTube" : "TikTok"} download error:`,
+            errorMessage,
+            fetchError
+          );
           window.webContents.send("download-error", { error: errorMessage });
           try {
             await fs.unlink(tempFilePath);

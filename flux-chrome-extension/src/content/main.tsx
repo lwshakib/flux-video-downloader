@@ -5,7 +5,7 @@ import App from './views/App.tsx'
 console.log('[CRXJS] Hello world from content script!')
 
 const container = document.createElement('div')
-container.id = 'crxjs-app'
+container.id = '___flux_app'
 document.body.appendChild(container)
 createRoot(container).render(
   <StrictMode>
