@@ -26,6 +26,7 @@ export function DownloaderApp() {
   );
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [supportsPause, setSupportsPause] = useState(true); // Track if current download supports pause
+  const [customDownloadPath, setCustomDownloadPath] = useState<string | null>(null); // Custom path for this file only
 
   // Sanitize title for filename
   const sanitizeTitle = (text: string | null): string => {
@@ -64,22 +65,18 @@ export function DownloaderApp() {
   const filePath = useMemo(() => {
     if (!url) return "";
     const fileName = `${sanitizeTitle(title)}.${getFormatFromUrl(url)}`;
-
-    // Check if downloadLocation is absolute or relative
-    // On Windows, absolute paths start with drive letter (C:\, D:\, etc.)
-    // On Unix, absolute paths start with /
-    const isAbsolute =
-      downloadLocation.startsWith("/") ||
-      /^[A-Za-z]:[\\/]/.test(downloadLocation);
-
-    if (isAbsolute) {
-      // Absolute path - use as is
-      return `${downloadLocation}/${fileName}`;
-    } else {
-      // Relative path - use forward slash for display (works on all platforms)
-      return `${downloadLocation}/${fileName}`;
-    }
-  }, [url, title, downloadLocation]);
+    
+    // If custom path is set, use it; otherwise use default download location
+    const basePath = customDownloadPath || downloadLocation;
+    
+    // Normalize path separators (use forward slash for display)
+    const normalizedBase = basePath.replace(/\\/g, '/');
+    const normalizedFileName = fileName.replace(/\\/g, '/');
+    
+    // Join path (handle trailing slashes)
+    const cleanBase = normalizedBase.replace(/\/$/, '');
+    return `${cleanBase}/${normalizedFileName}`;
+  }, [url, title, downloadLocation, customDownloadPath]);
 
   useEffect(() => {
     // Load settings to get download location
@@ -163,6 +160,7 @@ export function DownloaderApp() {
         setIsDownloadComplete(false);
         setCompletedFilePath(null);
         setDownloadError(null);
+        setCustomDownloadPath(null); // Reset custom path for new download
 
         // Determine if pause is supported based on URL
         // Fetch-based downloads (YouTube/TikTok) don't support pause
@@ -359,28 +357,24 @@ export function DownloaderApp() {
             className="h-9 w-9"
             onClick={async () => {
               if (!window?.ipcRenderer) return;
+              
               try {
                 const selectedPath = await window.ipcRenderer.invoke(
                   "select-download-location"
                 );
+                
                 if (selectedPath) {
-                  // Update the download location
-                  setDownloadLocation(selectedPath);
-
-                  // Save to settings
-                  await window.ipcRenderer.invoke("save-settings", {
-                    downloadLocation: selectedPath,
-                  });
-
-                  console.log("Download location updated to:", selectedPath);
+                  // Set custom path for this file only (doesn't change default location)
+                  setCustomDownloadPath(selectedPath);
+                  console.log("Custom download path selected:", selectedPath);
                 }
               } catch (error) {
-                const errorMessage =
+                console.error("Error selecting download location:", error);
+                setDownloadError(
                   error instanceof Error
                     ? error.message
-                    : "Failed to select download location";
-                setDownloadError(errorMessage);
-                console.error("Error selecting download location:", error);
+                    : "Failed to select download location"
+                );
               }
             }}
           >
