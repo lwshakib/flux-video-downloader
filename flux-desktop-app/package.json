@@ -1,7 +1,9 @@
 {
   "name": "flux-desktop-app",
-  "private": true,
   "version": "0.0.0",
+  "description": "Flux is a free video downloader for YouTube, Facebook (public and private), TikTok, and more. Paste a link, pick a quality, and save in seconds.",
+  "author": "Flux",
+  "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",

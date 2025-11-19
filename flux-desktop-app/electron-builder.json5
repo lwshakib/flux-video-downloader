@@ -1,43 +1,51 @@
 // @see - https://www.electron.build/configuration/configuration
 {
-  "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
-  "appId": "YourAppID",
-  "asar": true,
-  "productName": "YourAppName",
-  "directories": {
-    "output": "release/${version}"
+  $schema: "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
+  appId: "com.flux.downloader",
+  asar: true,
+  productName: "Flux Video Downloader",
+  copyright: "Copyright © 2026 Flux",
+  directories: {
+    output: "release/${version}",
+    buildResources: "public",
   },
-  "files": [
-    "dist",
-    "dist-electron"
+  files: ["dist", "dist-electron", "package.json"],
+  extraFiles: [
+    {
+      from: "public/icons",
+      to: "icons",
+      filter: ["**/*"],
+    },
   ],
-  "mac": {
-    "target": [
-      "dmg"
-    ],
-    "artifactName": "${productName}-Mac-${version}-Installer.${ext}"
+  mac: {
+    target: ["dmg"],
+    category: "public.app-category.utilities",
+    icon: "public/icons/mac/icon.icns",
+    artifactName: "${productName}-Mac-${version}-Installer.${ext}",
   },
-  "win": {
-    "target": [
+  win: {
+    target: [
       {
-        "target": "nsis",
-        "arch": [
-          "x64"
-        ]
-      }
+        target: "nsis",
+        arch: ["x64"],
+      },
     ],
-    "artifactName": "${productName}-Windows-${version}-Setup.${ext}"
+    icon: "public/icons/win/icon.ico",
+    artifactName: "${productName}-Windows-${version}-Setup.${ext}",
   },
-  "nsis": {
-    "oneClick": false,
-    "perMachine": false,
-    "allowToChangeInstallationDirectory": true,
-    "deleteAppDataOnUninstall": false
+  nsis: {
+    oneClick: false,
+    perMachine: false,
+    allowToChangeInstallationDirectory: true,
+    deleteAppDataOnUninstall: false,
+    createDesktopShortcut: true,
+    createStartMenuShortcut: true,
+    shortcutName: "Flux Video Downloader",
   },
-  "linux": {
-    "target": [
-      "AppImage"
-    ],
-    "artifactName": "${productName}-Linux-${version}.${ext}"
-  }
+  linux: {
+    target: ["AppImage"],
+    category: "Utility",
+    icon: "public/icons/png/512x512.png",
+    artifactName: "${productName}-Linux-${version}.${ext}",
+  },
 }

@@ -1,769 +1,546 @@
-import { ipcMain, dialog, BrowserWindow, shell, app } from "electron";
-import fs from "node:fs/promises";
-import http from "node:http";
-import os from "node:os";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-const __dirname$1 = path.dirname(fileURLToPath(import.meta.url));
-process.env.APP_ROOT = path.join(__dirname$1, "..");
-const VITE_DEV_SERVER_URL = process.env["VITE_DEV_SERVER_URL"];
-const MAIN_DIST = path.join(process.env.APP_ROOT, "dist-electron");
-const RENDERER_DIST = path.join(process.env.APP_ROOT, "dist");
-const getIconPath = () => {
-  const platform = process.platform;
-  const basePath = process.env.APP_ROOT;
-  switch (platform) {
+import { ipcMain as w, dialog as re, BrowserWindow as b, shell as ie, app as A } from "electron";
+import c from "node:fs/promises";
+import ae from "node:http";
+import W from "node:os";
+import t from "node:path";
+import { fileURLToPath as le } from "node:url";
+const z = t.dirname(le(import.meta.url));
+process.env.APP_ROOT = t.join(z, "..");
+const D = process.env.VITE_DEV_SERVER_URL, ye = t.join(process.env.APP_ROOT, "dist-electron"), I = t.join(process.env.APP_ROOT, "dist"), ce = () => {
+  const n = process.platform, e = process.env.APP_ROOT;
+  switch (n) {
     case "win32":
-      return path.join(basePath, "public", "icons", "win", "icon.ico");
+      return t.join(e, "public", "icons", "win", "icon.ico");
     case "darwin":
-      return path.join(basePath, "public", "icons", "mac", "icon.icns");
+      return t.join(e, "public", "icons", "mac", "icon.icns");
     case "linux":
     default:
-      return path.join(basePath, "public", "icons", "png", "256x256.png");
+      return t.join(e, "public", "icons", "png", "256x256.png");
   }
-};
-const iconPath = getIconPath();
-const getSettingsPaths = () => {
-  const homeDir = process.env.USERPROFILE || os.homedir();
-  const settingsDir = path.join(homeDir, ".flux");
-  const settingsFile = path.join(settingsDir, "settings.json");
-  return { settingsDir, settingsFile };
-};
-const ensureSettingsFile = async () => {
-  const { settingsDir, settingsFile } = getSettingsPaths();
-  const defaultSettings = { downloadLocation: "Downloads" };
+}, X = ce(), V = () => {
+  const n = process.env.USERPROFILE || W.homedir(), e = t.join(n, ".flux"), o = t.join(e, "settings.json");
+  return { settingsDir: e, settingsFile: o };
+}, de = async () => {
+  const { settingsDir: n, settingsFile: e } = V(), o = { downloadLocation: "Downloads" };
   try {
-    await fs.mkdir(settingsDir, { recursive: true });
-    await fs.access(settingsFile);
+    await c.mkdir(n, { recursive: !0 }), await c.access(e);
   } catch {
-    await fs.writeFile(
-      settingsFile,
-      JSON.stringify(defaultSettings, null, 2),
+    await c.writeFile(
+      e,
+      JSON.stringify(o, null, 2),
       "utf-8"
     );
   }
 };
-process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, "public") : RENDERER_DIST;
-const downloaderUrl = VITE_DEV_SERVER_URL ? `${VITE_DEV_SERVER_URL}/downloader.html` : path.join(RENDERER_DIST, "downloader.html");
-let win;
-const activeDownloads = /* @__PURE__ */ new Map();
-let downloaderWindow = null;
-let pendingDownloadData = null;
-const EXTENSION_SERVER_PORT = 8765;
-function createWindow() {
-  win = new BrowserWindow({
+process.env.VITE_PUBLIC = D ? t.join(process.env.APP_ROOT, "public") : I;
+const ue = D ? `${D}/downloader.html` : t.join(I, "downloader.html");
+let h;
+const x = /* @__PURE__ */ new Map();
+let k = null, H = null;
+const M = 8765;
+function G() {
+  h = new b({
     width: 1200,
     height: 670,
-    show: false,
-    autoHideMenuBar: true,
-    center: true,
+    show: !1,
+    autoHideMenuBar: !0,
+    center: !0,
     title: "Flux",
-    frame: false,
-    icon: iconPath,
+    frame: !1,
+    icon: X,
     webPreferences: {
-      preload: path.join(__dirname$1, "preload.mjs"),
-      sandbox: true,
-      contextIsolation: true
+      preload: t.join(z, "preload.mjs"),
+      sandbox: !0,
+      contextIsolation: !0
     }
-  });
-  win.webContents.openDevTools();
-  win.on("ready-to-show", () => {
-    win == null ? void 0 : win.show();
-  });
-  win.webContents.on("did-finish-load", () => {
-    win == null ? void 0 : win.webContents.send("main-process-message", (/* @__PURE__ */ new Date()).toLocaleString());
-  });
-  if (VITE_DEV_SERVER_URL) {
-    win.loadURL(VITE_DEV_SERVER_URL);
-  } else {
-    win.loadFile(path.join(RENDERER_DIST, "index.html"));
-  }
+  }), D && h.webContents.openDevTools(), h.on("ready-to-show", () => {
+    h == null || h.show();
+  }), h.webContents.on("did-finish-load", () => {
+    h == null || h.webContents.send("main-process-message", (/* @__PURE__ */ new Date()).toLocaleString());
+  }), D ? h.loadURL(D) : h.loadFile(t.join(I, "index.html"));
 }
-ipcMain.handle("select-download-location", async () => {
-  const { canceled, filePaths } = await dialog.showOpenDialog({
+w.handle("select-download-location", async () => {
+  const { canceled: n, filePaths: e } = await re.showOpenDialog({
     properties: ["openDirectory", "createDirectory"],
     title: "Select download folder"
   });
-  if (canceled || filePaths.length === 0) {
-    return null;
-  }
-  return filePaths[0];
+  return n || e.length === 0 ? null : e[0];
 });
-ipcMain.handle("load-settings", async () => {
+w.handle("load-settings", async () => {
   try {
-    const { settingsDir, settingsFile } = getSettingsPaths();
-    await fs.mkdir(settingsDir, { recursive: true });
-    const contents = await fs.readFile(settingsFile, "utf-8");
-    return JSON.parse(contents);
-  } catch (error) {
-    const err = error;
-    if ((err == null ? void 0 : err.code) === "ENOENT") {
-      return null;
-    }
-    console.error("Failed to load settings", error);
-    return null;
+    const { settingsDir: n, settingsFile: e } = V();
+    await c.mkdir(n, { recursive: !0 });
+    const o = await c.readFile(e, "utf-8");
+    return JSON.parse(o);
+  } catch (n) {
+    const e = n;
+    return (e == null ? void 0 : e.code) === "ENOENT" || console.error("Failed to load settings", n), null;
   }
 });
-ipcMain.handle("save-settings", async (_event, payload) => {
+w.handle("save-settings", async (n, e) => {
   try {
-    const { settingsDir, settingsFile } = getSettingsPaths();
-    await fs.mkdir(settingsDir, { recursive: true });
-    const data = JSON.stringify(payload ?? {}, null, 2);
-    await fs.writeFile(settingsFile, data, "utf-8");
-    return true;
-  } catch (error) {
-    console.error("Failed to save settings", error);
-    return false;
+    const { settingsDir: o, settingsFile: r } = V();
+    await c.mkdir(o, { recursive: !0 });
+    const s = JSON.stringify(e ?? {}, null, 2);
+    return await c.writeFile(r, s, "utf-8"), !0;
+  } catch (o) {
+    return console.error("Failed to save settings", o), !1;
   }
 });
-ipcMain.on("theme-change", (_event, theme) => {
-  BrowserWindow.getAllWindows().forEach((window) => {
-    if (window && !window.isDestroyed()) {
-      window.webContents.send("theme-changed", theme);
-    }
+w.on("theme-change", (n, e) => {
+  b.getAllWindows().forEach((o) => {
+    o && !o.isDestroyed() && o.webContents.send("theme-changed", e);
   });
 });
-ipcMain.handle("window-minimize", (_event) => {
-  const window = BrowserWindow.fromWebContents(_event.sender);
-  if (window && !window.isDestroyed()) {
-    window.minimize();
-  }
-  return true;
+w.handle("window-minimize", (n) => {
+  const e = b.fromWebContents(n.sender);
+  return e && !e.isDestroyed() && e.minimize(), !0;
 });
-ipcMain.handle("window-maximize", (_event) => {
-  const window = BrowserWindow.fromWebContents(_event.sender);
-  if (window && !window.isDestroyed()) {
-    if (window.isMaximized()) {
-      window.unmaximize();
-    } else {
-      window.maximize();
-    }
-  }
-  return true;
+w.handle("window-maximize", (n) => {
+  const e = b.fromWebContents(n.sender);
+  return e && !e.isDestroyed() && (e.isMaximized() ? e.unmaximize() : e.maximize()), !0;
 });
-ipcMain.handle("window-close", (_event) => {
-  const window = BrowserWindow.fromWebContents(_event.sender);
-  if (window && !window.isDestroyed()) {
-    window.close();
-  }
-  return true;
+w.handle("window-close", (n) => {
+  const e = b.fromWebContents(n.sender);
+  return e && !e.isDestroyed() && e.close(), !0;
 });
-ipcMain.handle("get-pending-download", () => {
-  const data = pendingDownloadData;
-  if (data) {
-    pendingDownloadData = null;
-  }
-  return data;
+w.handle("get-pending-download", () => {
+  const n = H;
+  return n && (H = null), n;
 });
-function createDownloaderWindow(payload) {
-  if (downloaderWindow && !downloaderWindow.isDestroyed()) {
-    console.log("Reusing existing downloader window");
-    downloaderWindow.webContents.send("download-request", {
-      url: payload.url,
-      title: payload.title || null,
-      cookies: payload.cookies || null
-    });
-    downloaderWindow.show();
-    downloaderWindow.focus();
+function Q(n) {
+  if (k && !k.isDestroyed()) {
+    console.log("Reusing existing downloader window"), k.webContents.send("download-request", {
+      url: n.url,
+      title: n.title || null,
+      cookies: n.cookies || null
+    }), k.show(), k.focus();
     return;
   }
   console.log("Creating new downloader window");
-  const newDownloaderWindow = new BrowserWindow({
+  const e = new b({
     width: 600,
     height: 300,
     minWidth: 400,
     minHeight: 250,
-    resizable: true,
-    show: false,
-    autoHideMenuBar: true,
-    center: true,
+    resizable: !0,
+    show: !1,
+    autoHideMenuBar: !0,
+    center: !0,
     title: "Flux Downloader",
-    frame: false,
-    icon: iconPath,
+    frame: !1,
+    icon: X,
     webPreferences: {
-      preload: path.join(__dirname$1, "preload.mjs"),
-      sandbox: true,
-      contextIsolation: true
+      preload: t.join(z, "preload.mjs"),
+      sandbox: !0,
+      contextIsolation: !0
     }
   });
-  downloaderWindow = newDownloaderWindow;
-  newDownloaderWindow.on("closed", () => {
-    if (downloaderWindow === newDownloaderWindow) {
-      downloaderWindow = null;
-    }
-  });
-  newDownloaderWindow.on("ready-to-show", () => {
-    newDownloaderWindow == null ? void 0 : newDownloaderWindow.show();
-    newDownloaderWindow == null ? void 0 : newDownloaderWindow.focus();
-  });
-  newDownloaderWindow.webContents.openDevTools();
-  const downloadPayload = {
-    url: payload.url,
-    title: payload.title || null,
-    cookies: payload.cookies || null
+  k = e, e.on("closed", () => {
+    k === e && (k = null);
+  }), e.on("ready-to-show", () => {
+    e == null || e.show(), e == null || e.focus();
+  }), D && e.webContents.openDevTools();
+  const o = {
+    url: n.url,
+    title: n.title || null,
+    cookies: n.cookies || null
   };
-  pendingDownloadData = downloadPayload;
-  const sendDownloadData = () => {
-    if (newDownloaderWindow && !newDownloaderWindow.isDestroyed()) {
-      setTimeout(() => {
-        if (newDownloaderWindow && !newDownloaderWindow.isDestroyed()) {
-          console.log("========================================");
-          console.log("📤 Sending download-request event to renderer");
-          console.log("🔗 URL:", downloadPayload.url);
-          console.log("📝 Title:", downloadPayload.title);
-          console.log("========================================");
-          newDownloaderWindow.webContents.send(
-            "download-request",
-            downloadPayload
-          );
-          newDownloaderWindow.show();
-          newDownloaderWindow.focus();
-          console.log("✅ Downloader window opened and data sent");
-        } else {
-          console.error("❌ Cannot send data - window is destroyed");
-        }
-      }, 1e3);
-    } else {
-      console.error("❌ Cannot send data - window is destroyed");
-    }
+  H = o;
+  const r = () => {
+    e && !e.isDestroyed() ? setTimeout(() => {
+      e && !e.isDestroyed() ? (console.log("========================================"), console.log("📤 Sending download-request event to renderer"), console.log("🔗 URL:", o.url), console.log("📝 Title:", o.title), console.log("========================================"), e.webContents.send(
+        "download-request",
+        o
+      ), e.show(), e.focus(), console.log("✅ Downloader window opened and data sent")) : console.error("❌ Cannot send data - window is destroyed");
+    }, 1e3) : console.error("❌ Cannot send data - window is destroyed");
   };
-  if (VITE_DEV_SERVER_URL) {
-    newDownloaderWindow.loadURL(downloaderUrl);
-  } else {
-    newDownloaderWindow.loadFile(path.join(RENDERER_DIST, "downloader.html"));
-  }
-  newDownloaderWindow.webContents.once("did-finish-load", sendDownloadData);
-  setTimeout(() => {
-    if (newDownloaderWindow && !newDownloaderWindow.isDestroyed() && !newDownloaderWindow.isVisible()) {
-      console.log("Fallback: Showing downloader window after timeout");
-      newDownloaderWindow.show();
-      newDownloaderWindow.focus();
+  D ? e.loadURL(ue) : e.loadFile(t.join(I, "downloader.html")), e.webContents.once("did-finish-load", r), setTimeout(() => {
+    if (e && !e.isDestroyed() && !e.isVisible()) {
+      console.log("Fallback: Showing downloader window after timeout"), e.show(), e.focus();
       try {
-        newDownloaderWindow.webContents.send(
+        e.webContents.send(
           "download-request",
-          downloadPayload
+          o
         );
-      } catch (error) {
-        console.error("Failed to send download data in fallback:", error);
+      } catch (s) {
+        console.error("Failed to send download data in fallback:", s);
       }
     }
   }, 3e3);
 }
-ipcMain.handle(
+w.handle(
   "start-download",
-  async (_event, payload) => {
-    createDownloaderWindow(payload);
-    return true;
-  }
+  async (n, e) => (Q(e), !0)
 );
-const MAX_REDIRECTS = 5;
-const BASE_HEADERS = {
+const Z = 5, ee = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
   Accept: "*/*",
   "Accept-Language": "en-US,en;q=0.9",
   Connection: "keep-alive",
   Referer: "https://www.tiktok.com/"
 };
-function buildCookieHeader(msToken, ttChainToken) {
-  const parts = [];
-  if (msToken) {
-    parts.push(`msToken=${msToken}`);
-  }
-  if (ttChainToken) {
-    parts.push(`tt_chain_token=${ttChainToken}`);
-  }
-  return parts.join("; ");
+function we(n, e) {
+  const o = [];
+  return n && o.push(`msToken=${n}`), e && o.push(`tt_chain_token=${e}`), o.join("; ");
 }
-async function fetchWithRedirects(url, attempt = 1) {
-  var _a;
-  if (attempt > MAX_REDIRECTS) {
+async function oe(n, e = 1) {
+  var a;
+  if (e > Z)
     throw new Error("Too many redirects while downloading the video.");
-  }
-  const parsed = new URL(url);
-  const headers = new Headers({
-    ...BASE_HEADERS,
-    Host: parsed.hostname
-  });
-  const response = await fetch(url, {
-    headers,
+  const o = new URL(n), r = new Headers({
+    ...ee,
+    Host: o.hostname
+  }), s = await fetch(n, {
+    headers: r,
     redirect: "manual"
   });
-  if (response.status >= 300 && response.status < 400 && response.headers.get("location")) {
-    const nextUrl = new URL(response.headers.get("location"), url);
-    console.log(`Redirect ${attempt}: ${url} -> ${nextUrl.toString()}`);
-    (_a = response.body) == null ? void 0 : _a.cancel();
-    return fetchWithRedirects(nextUrl.toString(), attempt + 1);
+  if (s.status >= 300 && s.status < 400 && s.headers.get("location")) {
+    const d = new URL(s.headers.get("location"), n);
+    return console.log(`Redirect ${e}: ${n} -> ${d.toString()}`), (a = s.body) == null || a.cancel(), oe(d.toString(), e + 1);
   }
-  if (!response.ok) {
-    const errorBody = await response.text().catch(() => "");
+  if (!s.ok) {
+    const d = await s.text().catch(() => "");
     throw new Error(
-      `Download failed with status ${response.status}. ${errorBody}`
+      `Download failed with status ${s.status}. ${d}`
     );
   }
-  return response;
+  return s;
 }
-async function fetchWithCookies(url, cookieHeader, attempt = 1) {
-  var _a;
-  if (attempt > MAX_REDIRECTS) {
+async function ne(n, e, o = 1) {
+  var d;
+  if (o > Z)
     throw new Error("Too many redirects while downloading the video.");
-  }
-  const parsed = new URL(url);
-  const headers = new Headers({
-    ...BASE_HEADERS,
-    Host: parsed.hostname
+  const r = new URL(n), s = new Headers({
+    ...ee,
+    Host: r.hostname
   });
-  if (!cookieHeader) {
+  if (!e)
     throw new Error(
       "TikTok cookie header could not be constructed from TikTok response."
     );
-  }
-  headers.set("Cookie", cookieHeader);
-  const response = await fetch(url, {
-    headers,
+  s.set("Cookie", e);
+  const a = await fetch(n, {
+    headers: s,
     redirect: "manual"
   });
-  if (response.status >= 300 && response.status < 400 && response.headers.get("location")) {
-    const nextUrl = new URL(response.headers.get("location"), url);
-    console.log(`TikTok redirect ${attempt}: ${url} -> ${nextUrl.toString()}`);
-    (_a = response.body) == null ? void 0 : _a.cancel();
-    return fetchWithCookies(nextUrl.toString(), cookieHeader, attempt + 1);
+  if (a.status >= 300 && a.status < 400 && a.headers.get("location")) {
+    const l = new URL(a.headers.get("location"), n);
+    return console.log(`TikTok redirect ${o}: ${n} -> ${l.toString()}`), (d = a.body) == null || d.cancel(), ne(l.toString(), e, o + 1);
   }
-  if (!response.ok) {
-    const errorBody = await response.text().catch(() => "");
+  if (!a.ok) {
+    const l = await a.text().catch(() => "");
     throw new Error(
-      `Download failed with status ${response.status}. ${errorBody}`
+      `Download failed with status ${a.status}. ${l}`
     );
   }
-  return response;
+  return a;
 }
-ipcMain.handle(
+w.handle(
   "download-file",
-  async (event, payload) => {
-    var _a, _b;
-    const window = BrowserWindow.fromWebContents(event.sender);
-    if (!window || window.isDestroyed()) {
-      console.error("Download error: Window not found");
-      return { success: false, error: "Window not found" };
-    }
+  async (n, e) => {
+    var r, s;
+    const o = b.fromWebContents(n.sender);
+    if (!o || o.isDestroyed())
+      return console.error("Download error: Window not found"), { success: !1, error: "Window not found" };
     try {
       console.log("Download started:", {
-        url: payload.url.substring(0, 100) + "...",
-        hasCookies: !!(((_a = payload.cookies) == null ? void 0 : _a.msToken) || ((_b = payload.cookies) == null ? void 0 : _b.ttChainToken))
+        url: e.url.substring(0, 100) + "...",
+        hasCookies: !!((r = e.cookies) != null && r.msToken || (s = e.cookies) != null && s.ttChainToken)
       });
-      const windowSession = window.webContents.session;
-      const normalizedPath = payload.filePath.replace(/\//g, path.sep);
-      let absoluteFilePath = normalizedPath;
-      if (!path.isAbsolute(absoluteFilePath)) {
-        const homeDir = process.env.USERPROFILE || os.homedir();
-        absoluteFilePath = path.join(homeDir, normalizedPath);
+      const a = o.webContents.session, d = e.filePath.replace(/\//g, t.sep);
+      let l = d;
+      if (!t.isAbsolute(l)) {
+        const R = process.env.USERPROFILE || W.homedir();
+        l = t.join(R, d);
       }
-      absoluteFilePath = path.normalize(absoluteFilePath);
-      const finalDir = path.dirname(absoluteFilePath);
-      await fs.mkdir(finalDir, { recursive: true });
-      const tempDir = path.join(os.tmpdir(), "flux-downloads");
-      await fs.mkdir(tempDir, { recursive: true });
-      const fileName = path.basename(absoluteFilePath);
-      const fileExt = path.extname(fileName);
-      const fileBase = path.basename(fileName, fileExt);
-      const tempFilePath = path.join(
-        tempDir,
-        `${fileBase}-${Date.now()}${fileExt}`
-      );
-      const urlObj = new URL(payload.url);
-      const isYouTube = urlObj.hostname.includes("youtube.com") || urlObj.hostname.includes("youtu.be") || urlObj.hostname.includes("googlevideo.com");
-      const isTikTokDownload = payload.cookies && (payload.cookies.msToken || payload.cookies.ttChainToken);
-      if ((isYouTube || isTikTokDownload) && (!isTikTokDownload || payload.cookies)) {
-        const downloadType = isYouTube ? "YouTube" : "TikTok";
-        console.log(`Using fetch-based download for ${downloadType} video`);
-        let cookieHeader = "";
-        if (isTikTokDownload && payload.cookies) {
-          cookieHeader = buildCookieHeader(
-            payload.cookies.msToken,
-            payload.cookies.ttChainToken
-          );
-          console.log("Cookie header built:", cookieHeader ? "Yes" : "No");
-        }
+      l = t.normalize(l);
+      const te = t.dirname(l);
+      await c.mkdir(te, { recursive: !0 });
+      const Y = t.join(W.tmpdir(), "flux-downloads");
+      await c.mkdir(Y, { recursive: !0 });
+      const J = t.basename(l), q = t.extname(J), se = t.basename(J, q), T = t.join(
+        Y,
+        `${se}-${Date.now()}${q}`
+      ), L = new URL(e.url), $ = L.hostname.includes("youtube.com") || L.hostname.includes("youtu.be") || L.hostname.includes("googlevideo.com"), _ = e.cookies && (e.cookies.msToken || e.cookies.ttChainToken);
+      if (($ || _) && (!_ || e.cookies)) {
+        console.log(`Using fetch-based download for ${$ ? "YouTube" : "TikTok"} video`);
+        let g = "";
+        _ && e.cookies && (g = we(
+          e.cookies.msToken,
+          e.cookies.ttChainToken
+        ), console.log("Cookie header built:", g ? "Yes" : "No"));
         try {
-          let response;
-          if (isTikTokDownload && cookieHeader) {
-            response = await fetchWithCookies(payload.url, cookieHeader);
-          } else {
-            response = await fetchWithRedirects(payload.url);
-          }
-          console.log("Fetch response received:", {
-            status: response.status,
-            contentType: response.headers.get("content-type")
+          let u;
+          _ && g ? u = await ne(e.url, g) : u = await oe(e.url), console.log("Fetch response received:", {
+            status: u.status,
+            contentType: u.headers.get("content-type")
           });
-          const contentLength = response.headers.get("content-length");
-          const totalBytes = contentLength ? parseInt(contentLength, 10) : 0;
-          const fileHandle = await fs.open(tempFilePath, "w");
-          const body = response.body;
-          if (!body) {
-            await fileHandle.close();
-            throw new Error("Response body is null");
-          }
-          let receivedBytes = 0;
-          let position = 0;
-          const reader = body.getReader();
+          const m = u.headers.get("content-length"), p = m ? parseInt(m, 10) : 0, P = await c.open(T, "w"), U = u.body;
+          if (!U)
+            throw await P.close(), new Error("Response body is null");
+          let F = 0, E = 0;
+          const v = U.getReader();
           try {
-            let reading = true;
-            while (reading) {
-              const { done, value } = await reader.read();
-              if (done) {
-                reading = false;
+            let y = !0;
+            for (; y; ) {
+              const { done: C, value: S } = await v.read();
+              if (C) {
+                y = !1;
                 break;
               }
-              if (value) {
-                const buffer = Buffer.from(value);
-                await fileHandle.write(buffer, 0, buffer.length, position);
-                position += buffer.length;
-                receivedBytes += buffer.length;
-                if (totalBytes > 0) {
-                  const percent = Math.round(
-                    receivedBytes / totalBytes * 100
+              if (S) {
+                const j = Buffer.from(S);
+                if (await P.write(j, 0, j.length, E), E += j.length, F += j.length, p > 0) {
+                  const K = Math.round(
+                    F / p * 100
                   );
-                  window.webContents.send("download-progress", {
-                    percent: isNaN(percent) ? 0 : percent,
-                    received: receivedBytes,
-                    total: totalBytes
+                  o.webContents.send("download-progress", {
+                    percent: isNaN(K) ? 0 : K,
+                    received: F,
+                    total: p
                   });
                 }
               }
             }
           } finally {
-            await fileHandle.close();
+            await P.close();
           }
           console.log("Download completed, copying to final location");
-          let finalPath = absoluteFilePath;
-          let counter = 1;
-          let fileExists = true;
-          while (fileExists) {
+          let i = l, f = 1, O = !0;
+          for (; O; )
             try {
-              await fs.access(finalPath);
-              const dir = path.dirname(absoluteFilePath);
-              const ext = path.extname(absoluteFilePath);
-              const base = path.basename(absoluteFilePath, ext);
-              finalPath = path.join(dir, `${base} (${counter})${ext}`);
-              counter++;
+              await c.access(i);
+              const y = t.dirname(l), C = t.extname(l), S = t.basename(l, C);
+              i = t.join(y, `${S} (${f})${C}`), f++;
             } catch {
-              fileExists = false;
+              O = !1;
             }
-          }
-          await fs.copyFile(tempFilePath, finalPath);
-          console.log("File copied to:", finalPath);
+          await c.copyFile(T, i), console.log("File copied to:", i);
           try {
-            await fs.unlink(tempFilePath);
-          } catch (cleanupError) {
-            console.warn("Failed to cleanup temp file:", cleanupError);
+            await c.unlink(T);
+          } catch (y) {
+            console.warn("Failed to cleanup temp file:", y);
           }
-          window.webContents.send("download-complete", {
-            filePath: finalPath
-          });
-          return { success: true, filePath: finalPath };
-        } catch (fetchError) {
-          const errorMessage = fetchError instanceof Error ? fetchError.message : `Failed to download ${isYouTube ? "YouTube" : "TikTok"} video`;
+          return o.webContents.send("download-complete", {
+            filePath: i
+          }), { success: !0, filePath: i };
+        } catch (u) {
+          const m = u instanceof Error ? u.message : `Failed to download ${$ ? "YouTube" : "TikTok"} video`;
           console.error(
-            `${isYouTube ? "YouTube" : "TikTok"} download error:`,
-            errorMessage,
-            fetchError
-          );
-          window.webContents.send("download-error", { error: errorMessage });
+            `${$ ? "YouTube" : "TikTok"} download error:`,
+            m,
+            u
+          ), o.webContents.send("download-error", { error: m });
           try {
-            await fs.unlink(tempFilePath);
+            await c.unlink(T);
           } catch {
           }
-          return { success: false, error: errorMessage };
+          return { success: !1, error: m };
         }
       }
-      return new Promise((resolve) => {
-        let downloadResolved = false;
-        const willDownloadHandler = (_event, item) => {
-          const itemUrl = item.getURL();
-          const baseUrl = payload.url.split("?")[0];
-          const itemBaseUrl = itemUrl.split("?")[0];
-          if (itemUrl === payload.url || itemBaseUrl === baseUrl) {
-            activeDownloads.set(window.id, item);
-            item.setSavePath(tempFilePath);
-            item.on("updated", () => {
-              const total = item.getTotalBytes();
-              const received = item.getReceivedBytes();
-              if (total > 0) {
-                const progress = received / total;
-                const percent = Math.round(progress * 100);
-                window.webContents.send("download-progress", {
-                  percent: isNaN(percent) ? 0 : percent,
-                  received,
-                  total
-                });
-              }
-            });
-            item.once("done", (_event2, state) => {
-              activeDownloads.delete(window.id);
-              windowSession.removeListener(
-                "will-download",
-                willDownloadHandler
-              );
-              if (state === "completed") {
-                if (!downloadResolved) {
-                  downloadResolved = true;
-                  console.log("Download completed, copying to final location");
-                  (async () => {
+      return new Promise((R) => {
+        let g = !1;
+        const u = (m, p) => {
+          const P = p.getURL(), U = e.url.split("?")[0], F = P.split("?")[0];
+          (P === e.url || F === U) && (x.set(o.id, p), p.setSavePath(T), p.on("updated", () => {
+            const E = p.getTotalBytes(), v = p.getReceivedBytes();
+            if (E > 0) {
+              const i = v / E, f = Math.round(i * 100);
+              o.webContents.send("download-progress", {
+                percent: isNaN(f) ? 0 : f,
+                received: v,
+                total: E
+              });
+            }
+          }), p.once("done", (E, v) => {
+            if (x.delete(o.id), a.removeListener(
+              "will-download",
+              u
+            ), v === "completed")
+              g || (g = !0, console.log("Download completed, copying to final location"), (async () => {
+                try {
+                  let i = l, f = 1, O = !0;
+                  for (; O; )
                     try {
-                      let finalPath = absoluteFilePath;
-                      let counter = 1;
-                      let fileExists = true;
-                      while (fileExists) {
-                        try {
-                          await fs.access(finalPath);
-                          const dir = path.dirname(absoluteFilePath);
-                          const ext = path.extname(absoluteFilePath);
-                          const base = path.basename(absoluteFilePath, ext);
-                          finalPath = path.join(
-                            dir,
-                            `${base} (${counter})${ext}`
-                          );
-                          counter++;
-                        } catch {
-                          fileExists = false;
-                        }
-                      }
-                      await fs.copyFile(tempFilePath, finalPath);
-                      console.log("File copied to:", finalPath);
-                      try {
-                        await fs.unlink(tempFilePath);
-                      } catch (cleanupError) {
-                        console.warn(
-                          "Failed to cleanup temp file:",
-                          cleanupError
-                        );
-                      }
-                      window.webContents.send("download-complete", {
-                        filePath: finalPath
-                      });
-                    } catch (copyError) {
-                      const errorMessage = copyError instanceof Error ? copyError.message : "Failed to copy file to final location";
-                      console.error("Copy error:", errorMessage, copyError);
-                      window.webContents.send("download-error", {
-                        error: errorMessage
-                      });
+                      await c.access(i);
+                      const y = t.dirname(l), C = t.extname(l), S = t.basename(l, C);
+                      i = t.join(
+                        y,
+                        `${S} (${f})${C}`
+                      ), f++;
+                    } catch {
+                      O = !1;
                     }
-                  })();
-                  resolve({ success: true, filePath: absoluteFilePath });
+                  await c.copyFile(T, i), console.log("File copied to:", i);
+                  try {
+                    await c.unlink(T);
+                  } catch (y) {
+                    console.warn(
+                      "Failed to cleanup temp file:",
+                      y
+                    );
+                  }
+                  o.webContents.send("download-complete", {
+                    filePath: i
+                  });
+                } catch (i) {
+                  const f = i instanceof Error ? i.message : "Failed to copy file to final location";
+                  console.error("Copy error:", f, i), o.webContents.send("download-error", {
+                    error: f
+                  });
                 }
-              } else {
-                if (!downloadResolved) {
-                  downloadResolved = true;
-                  const error = `Download failed: ${state}`;
-                  console.error("Download failed:", error);
-                  (async () => {
-                    try {
-                      await fs.unlink(tempFilePath);
-                    } catch (cleanupError) {
-                      console.warn(
-                        "Failed to cleanup temp file on error:",
-                        cleanupError
-                      );
-                    }
-                  })();
-                  window.webContents.send("download-error", { error });
-                  resolve({ success: false, error });
+              })(), R({ success: !0, filePath: l }));
+            else if (!g) {
+              g = !0;
+              const i = `Download failed: ${v}`;
+              console.error("Download failed:", i), (async () => {
+                try {
+                  await c.unlink(T);
+                } catch (f) {
+                  console.warn(
+                    "Failed to cleanup temp file on error:",
+                    f
+                  );
                 }
-              }
-            });
-          }
+              })(), o.webContents.send("download-error", { error: i }), R({ success: !1, error: i });
+            }
+          }));
         };
-        windowSession.on("will-download", willDownloadHandler);
-        window.webContents.downloadURL(payload.url);
-        setTimeout(() => {
-          if (!downloadResolved) {
-            downloadResolved = true;
-            windowSession.removeListener("will-download", willDownloadHandler);
-            (async () => {
+        a.on("will-download", u), o.webContents.downloadURL(e.url), setTimeout(() => {
+          if (!g) {
+            g = !0, a.removeListener("will-download", u), (async () => {
               try {
-                await fs.unlink(tempFilePath);
+                await c.unlink(T);
               } catch {
               }
             })();
-            const error = "Download timeout - no download started";
-            console.error("Download timeout:", error);
-            window.webContents.send("download-error", { error });
-            resolve({ success: false, error });
+            const m = "Download timeout - no download started";
+            console.error("Download timeout:", m), o.webContents.send("download-error", { error: m }), R({ success: !1, error: m });
           }
         }, 3e4);
       });
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      console.error("Download error:", errorMessage, error);
-      window.webContents.send("download-error", { error: errorMessage });
-      return { success: false, error: errorMessage };
+    } catch (a) {
+      const d = a instanceof Error ? a.message : "Unknown error";
+      return console.error("Download error:", d, a), o.webContents.send("download-error", { error: d }), { success: !1, error: d };
     }
   }
 );
-ipcMain.handle("pause-download", (event) => {
-  const window = BrowserWindow.fromWebContents(event.sender);
-  if (!window || window.isDestroyed()) {
-    return { success: false, error: "Window not found" };
-  }
-  const downloadItem = activeDownloads.get(window.id);
-  if (!downloadItem) {
+w.handle("pause-download", (n) => {
+  const e = b.fromWebContents(n.sender);
+  if (!e || e.isDestroyed())
+    return { success: !1, error: "Window not found" };
+  const o = x.get(e.id);
+  if (!o)
     return {
-      success: false,
+      success: !1,
       error: "No active download found. Pause is not supported for fetch-based downloads (YouTube/TikTok)."
     };
-  }
-  if (downloadItem.isPaused()) {
-    return { success: false, error: "Download is already paused" };
-  }
-  const state = downloadItem.getState();
-  if (state === "completed" || state === "cancelled" || state === "interrupted") {
+  if (o.isPaused())
+    return { success: !1, error: "Download is already paused" };
+  const r = o.getState();
+  if (r === "completed" || r === "cancelled" || r === "interrupted")
     return {
-      success: false,
+      success: !1,
       error: "Download cannot be paused in current state"
     };
-  }
   try {
-    downloadItem.pause();
-    return { success: true };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "Failed to pause download";
-    return { success: false, error: errorMessage };
+    return o.pause(), { success: !0 };
+  } catch (s) {
+    return { success: !1, error: s instanceof Error ? s.message : "Failed to pause download" };
   }
 });
-ipcMain.handle("resume-download", (event) => {
-  const window = BrowserWindow.fromWebContents(event.sender);
-  if (!window || window.isDestroyed()) {
-    return { success: false, error: "Window not found" };
-  }
-  const downloadItem = activeDownloads.get(window.id);
-  if (!downloadItem) {
+w.handle("resume-download", (n) => {
+  const e = b.fromWebContents(n.sender);
+  if (!e || e.isDestroyed())
+    return { success: !1, error: "Window not found" };
+  const o = x.get(e.id);
+  if (!o)
     return {
-      success: false,
+      success: !1,
       error: "No active download found. Resume is not supported for fetch-based downloads (YouTube/TikTok)."
     };
-  }
-  if (!downloadItem.canResume()) {
+  if (!o.canResume())
     return {
-      success: false,
+      success: !1,
       error: "Download cannot be resumed. It may not be paused."
     };
-  }
   try {
-    downloadItem.resume();
-    return { success: true };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "Failed to resume download";
-    return { success: false, error: errorMessage };
+    return o.resume(), { success: !0 };
+  } catch (r) {
+    return { success: !1, error: r instanceof Error ? r.message : "Failed to resume download" };
   }
 });
-ipcMain.handle("cancel-download", (event) => {
-  const window = BrowserWindow.fromWebContents(event.sender);
-  if (!window || window.isDestroyed()) {
-    return { success: false, error: "Window not found" };
-  }
-  const downloadItem = activeDownloads.get(window.id);
-  if (!downloadItem) {
-    return { success: false, error: "No active download found" };
-  }
+w.handle("cancel-download", (n) => {
+  const e = b.fromWebContents(n.sender);
+  if (!e || e.isDestroyed())
+    return { success: !1, error: "Window not found" };
+  const o = x.get(e.id);
+  if (!o)
+    return { success: !1, error: "No active download found" };
   try {
-    downloadItem.cancel();
-    activeDownloads.delete(window.id);
-    window.webContents.send("download-cancelled");
-    return { success: true };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "Failed to cancel download";
-    return { success: false, error: errorMessage };
+    return o.cancel(), x.delete(e.id), e.webContents.send("download-cancelled"), { success: !0 };
+  } catch (r) {
+    return { success: !1, error: r instanceof Error ? r.message : "Failed to cancel download" };
   }
 });
-ipcMain.handle("open-folder", async (_event, filePath) => {
+w.handle("open-folder", async (n, e) => {
   try {
-    const dir = path.dirname(filePath);
-    await shell.openPath(dir);
-    return { success: true };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "Failed to open folder";
-    return { success: false, error: errorMessage };
+    const o = t.dirname(e);
+    return await ie.openPath(o), { success: !0 };
+  } catch (o) {
+    return { success: !1, error: o instanceof Error ? o.message : "Failed to open folder" };
   }
 });
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
-    app.quit();
-    win = null;
-  }
+A.on("window-all-closed", () => {
+  process.platform !== "darwin" && (A.quit(), h = null);
 });
-app.on("activate", () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow();
-  }
+A.on("activate", () => {
+  b.getAllWindows().length === 0 && G();
 });
-let extensionServer = null;
-function createExtensionServer() {
-  if (extensionServer && extensionServer.listening) {
-    console.log("Extension server already running");
-    return extensionServer;
-  }
-  const server = http.createServer((req, res) => {
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-    if (req.method === "OPTIONS") {
-      res.writeHead(200);
-      res.end();
+let N = null;
+function B() {
+  if (N && N.listening)
+    return console.log("Extension server already running"), N;
+  const n = ae.createServer((e, o) => {
+    if (o.setHeader("Access-Control-Allow-Origin", "*"), o.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS"), o.setHeader("Access-Control-Allow-Headers", "Content-Type"), e.method === "OPTIONS") {
+      o.writeHead(200), o.end();
       return;
     }
-    if (req.method === "POST" && req.url === "/download") {
-      let body = "";
-      req.on("data", (chunk) => {
-        body += chunk.toString();
-      });
-      req.on("end", () => {
+    if (e.method === "POST" && e.url === "/download") {
+      let r = "";
+      e.on("data", (s) => {
+        r += s.toString();
+      }), e.on("end", () => {
         try {
-          const data = JSON.parse(body);
-          console.log("Received download request from extension:", data.url);
-          createDownloaderWindow(data);
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ success: true }));
-        } catch (error) {
-          console.error("Error processing extension request:", error);
-          res.writeHead(400, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ success: false, error: "Invalid request" }));
+          const s = JSON.parse(r);
+          console.log("Received download request from extension:", s.url), Q(s), o.writeHead(200, { "Content-Type": "application/json" }), o.end(JSON.stringify({ success: !0 }));
+        } catch (s) {
+          console.error("Error processing extension request:", s), o.writeHead(400, { "Content-Type": "application/json" }), o.end(JSON.stringify({ success: !1, error: "Invalid request" }));
         }
       });
-    } else {
-      res.writeHead(404);
-      res.end("Not found");
-    }
+    } else
+      o.writeHead(404), o.end("Not found");
   });
-  server.listen(EXTENSION_SERVER_PORT, "127.0.0.1", () => {
+  return n.listen(M, "127.0.0.1", () => {
     console.log(
-      `Extension server listening on http://127.0.0.1:${EXTENSION_SERVER_PORT}`
+      `Extension server listening on http://127.0.0.1:${M}`
     );
-  });
-  server.on("error", (error) => {
-    if (error.code === "EADDRINUSE") {
-      console.log(
-        `Port ${EXTENSION_SERVER_PORT} is already in use. Trying to reuse existing server.`
-      );
-      setTimeout(() => {
-        createExtensionServer();
-      }, 1e3);
-    } else {
-      console.error("Extension server error:", error);
-      setTimeout(() => {
-        createExtensionServer();
-      }, 2e3);
-    }
-  });
-  extensionServer = server;
-  return server;
+  }), n.on("error", (e) => {
+    e.code === "EADDRINUSE" ? (console.log(
+      `Port ${M} is already in use. Trying to reuse existing server.`
+    ), setTimeout(() => {
+      B();
+    }, 1e3)) : (console.error("Extension server error:", e), setTimeout(() => {
+      B();
+    }, 2e3));
+  }), N = n, n;
 }
-app.whenReady().then(async () => {
-  await ensureSettingsFile();
-  createWindow();
-  createExtensionServer();
-  console.log("Flux desktop app ready. Extension server should be running.");
+A.whenReady().then(async () => {
+  await de(), G(), B(), console.log("Flux desktop app ready. Extension server should be running.");
 });
 export {
-  MAIN_DIST,
-  RENDERER_DIST,
-  VITE_DEV_SERVER_URL
+  ye as MAIN_DIST,
+  I as RENDERER_DIST,
+  D as VITE_DEV_SERVER_URL
 };

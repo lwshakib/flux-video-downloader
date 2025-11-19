@@ -112,8 +112,10 @@ function createWindow() {
     },
   });
 
-  // Open DevTools for main window
-  win.webContents.openDevTools();
+  // Open DevTools only in development mode
+  if (VITE_DEV_SERVER_URL) {
+    win.webContents.openDevTools();
+  }
 
   win.on("ready-to-show", () => {
     win?.show();
@@ -283,8 +285,10 @@ function createDownloaderWindow(payload: {
     newDownloaderWindow?.focus();
   });
 
-  // Open DevTools for downloader window
-  newDownloaderWindow.webContents.openDevTools();
+  // Open DevTools only in development mode
+  if (VITE_DEV_SERVER_URL) {
+    newDownloaderWindow.webContents.openDevTools();
+  }
 
   // Store payload to send after page loads
   const downloadPayload = {
