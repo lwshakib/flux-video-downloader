@@ -1,5 +1,6 @@
 import { ipcMain, dialog, BrowserWindow, shell, app } from "electron";
 import fs from "node:fs/promises";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -46,6 +47,9 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 
 const downloaderUrl = VITE_DEV_SERVER_URL ? `${VITE_DEV_SERVER_URL}/downloader.html` : path.join(RENDERER_DIST, "downloader.html");
 let win;
 const activeDownloads = /* @__PURE__ */ new Map();
+let downloaderWindow = null;
+let pendingDownloadData = null;
+const EXTENSION_SERVER_PORT = 8765;
 function createWindow() {
   win = new BrowserWindow({
     width: 1200,
@@ -144,48 +148,111 @@ ipcMain.handle("window-close", (_event) => {
   }
   return true;
 });
+ipcMain.handle("get-pending-download", () => {
+  const data = pendingDownloadData;
+  if (data) {
+    pendingDownloadData = null;
+  }
+  return data;
+});
+function createDownloaderWindow(payload) {
+  if (downloaderWindow && !downloaderWindow.isDestroyed()) {
+    console.log("Reusing existing downloader window");
+    downloaderWindow.webContents.send("download-request", {
+      url: payload.url,
+      title: payload.title || null,
+      cookies: payload.cookies || null
+    });
+    downloaderWindow.show();
+    downloaderWindow.focus();
+    return;
+  }
+  console.log("Creating new downloader window");
+  const newDownloaderWindow = new BrowserWindow({
+    width: 600,
+    height: 300,
+    minWidth: 400,
+    minHeight: 250,
+    resizable: true,
+    show: false,
+    autoHideMenuBar: true,
+    center: true,
+    title: "Flux Downloader",
+    frame: false,
+    icon: iconPath,
+    webPreferences: {
+      preload: path.join(__dirname$1, "preload.mjs"),
+      sandbox: true,
+      contextIsolation: true
+    }
+  });
+  downloaderWindow = newDownloaderWindow;
+  newDownloaderWindow.on("closed", () => {
+    if (downloaderWindow === newDownloaderWindow) {
+      downloaderWindow = null;
+    }
+  });
+  newDownloaderWindow.on("ready-to-show", () => {
+    newDownloaderWindow == null ? void 0 : newDownloaderWindow.show();
+    newDownloaderWindow == null ? void 0 : newDownloaderWindow.focus();
+  });
+  newDownloaderWindow.webContents.openDevTools();
+  const downloadPayload = {
+    url: payload.url,
+    title: payload.title || null,
+    cookies: payload.cookies || null
+  };
+  pendingDownloadData = downloadPayload;
+  const sendDownloadData = () => {
+    if (newDownloaderWindow && !newDownloaderWindow.isDestroyed()) {
+      setTimeout(() => {
+        if (newDownloaderWindow && !newDownloaderWindow.isDestroyed()) {
+          console.log("========================================");
+          console.log("📤 Sending download-request event to renderer");
+          console.log("🔗 URL:", downloadPayload.url);
+          console.log("📝 Title:", downloadPayload.title);
+          console.log("========================================");
+          newDownloaderWindow.webContents.send(
+            "download-request",
+            downloadPayload
+          );
+          newDownloaderWindow.show();
+          newDownloaderWindow.focus();
+          console.log("✅ Downloader window opened and data sent");
+        } else {
+          console.error("❌ Cannot send data - window is destroyed");
+        }
+      }, 1e3);
+    } else {
+      console.error("❌ Cannot send data - window is destroyed");
+    }
+  };
+  if (VITE_DEV_SERVER_URL) {
+    newDownloaderWindow.loadURL(downloaderUrl);
+  } else {
+    newDownloaderWindow.loadFile(path.join(RENDERER_DIST, "downloader.html"));
+  }
+  newDownloaderWindow.webContents.once("did-finish-load", sendDownloadData);
+  setTimeout(() => {
+    if (newDownloaderWindow && !newDownloaderWindow.isDestroyed() && !newDownloaderWindow.isVisible()) {
+      console.log("Fallback: Showing downloader window after timeout");
+      newDownloaderWindow.show();
+      newDownloaderWindow.focus();
+      try {
+        newDownloaderWindow.webContents.send(
+          "download-request",
+          downloadPayload
+        );
+      } catch (error) {
+        console.error("Failed to send download data in fallback:", error);
+      }
+    }
+  }, 3e3);
+}
 ipcMain.handle(
   "start-download",
   async (_event, payload) => {
-    const newDownloaderWindow = new BrowserWindow({
-      width: 600,
-      height: 300,
-      minWidth: 400,
-      minHeight: 250,
-      resizable: true,
-      show: false,
-      autoHideMenuBar: true,
-      center: true,
-      title: "Flux Downloader",
-      frame: false,
-      icon: iconPath,
-      webPreferences: {
-        preload: path.join(__dirname$1, "preload.mjs"),
-        sandbox: true,
-        contextIsolation: true
-      }
-    });
-    newDownloaderWindow.on("ready-to-show", () => {
-      newDownloaderWindow == null ? void 0 : newDownloaderWindow.show();
-    });
-    newDownloaderWindow.webContents.openDevTools();
-    const sendDownloadData = () => {
-      if (newDownloaderWindow && !newDownloaderWindow.isDestroyed()) {
-        newDownloaderWindow.webContents.send("download-request", {
-          url: payload.url,
-          title: payload.title || null,
-          cookies: payload.cookies || null
-        });
-        newDownloaderWindow.show();
-        newDownloaderWindow.focus();
-      }
-    };
-    if (VITE_DEV_SERVER_URL) {
-      newDownloaderWindow.loadURL(downloaderUrl);
-    } else {
-      newDownloaderWindow.loadFile(path.join(RENDERER_DIST, "downloader.html"));
-    }
-    newDownloaderWindow.webContents.once("did-finish-load", sendDownloadData);
+    createDownloaderWindow(payload);
     return true;
   }
 );
@@ -539,13 +606,28 @@ ipcMain.handle("pause-download", (event) => {
   }
   const downloadItem = activeDownloads.get(window.id);
   if (!downloadItem) {
-    return { success: false, error: "No active download found" };
+    return {
+      success: false,
+      error: "No active download found. Pause is not supported for fetch-based downloads (YouTube/TikTok)."
+    };
   }
-  if (downloadItem.canResume()) {
+  if (downloadItem.isPaused()) {
+    return { success: false, error: "Download is already paused" };
+  }
+  const state = downloadItem.getState();
+  if (state === "completed" || state === "cancelled" || state === "interrupted") {
+    return {
+      success: false,
+      error: "Download cannot be paused in current state"
+    };
+  }
+  try {
     downloadItem.pause();
     return { success: true };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Failed to pause download";
+    return { success: false, error: errorMessage };
   }
-  return { success: false, error: "Download cannot be paused" };
 });
 ipcMain.handle("resume-download", (event) => {
   const window = BrowserWindow.fromWebContents(event.sender);
@@ -554,13 +636,43 @@ ipcMain.handle("resume-download", (event) => {
   }
   const downloadItem = activeDownloads.get(window.id);
   if (!downloadItem) {
-    return { success: false, error: "No active download found" };
+    return {
+      success: false,
+      error: "No active download found. Resume is not supported for fetch-based downloads (YouTube/TikTok)."
+    };
   }
-  if (downloadItem.canResume()) {
+  if (!downloadItem.canResume()) {
+    return {
+      success: false,
+      error: "Download cannot be resumed. It may not be paused."
+    };
+  }
+  try {
     downloadItem.resume();
     return { success: true };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Failed to resume download";
+    return { success: false, error: errorMessage };
   }
-  return { success: false, error: "Download cannot be resumed" };
+});
+ipcMain.handle("cancel-download", (event) => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window || window.isDestroyed()) {
+    return { success: false, error: "Window not found" };
+  }
+  const downloadItem = activeDownloads.get(window.id);
+  if (!downloadItem) {
+    return { success: false, error: "No active download found" };
+  }
+  try {
+    downloadItem.cancel();
+    activeDownloads.delete(window.id);
+    window.webContents.send("download-cancelled");
+    return { success: true };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Failed to cancel download";
+    return { success: false, error: errorMessage };
+  }
 });
 ipcMain.handle("open-folder", async (_event, filePath) => {
   try {
@@ -583,9 +695,72 @@ app.on("activate", () => {
     createWindow();
   }
 });
+let extensionServer = null;
+function createExtensionServer() {
+  if (extensionServer && extensionServer.listening) {
+    console.log("Extension server already running");
+    return extensionServer;
+  }
+  const server = http.createServer((req, res) => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    if (req.method === "OPTIONS") {
+      res.writeHead(200);
+      res.end();
+      return;
+    }
+    if (req.method === "POST" && req.url === "/download") {
+      let body = "";
+      req.on("data", (chunk) => {
+        body += chunk.toString();
+      });
+      req.on("end", () => {
+        try {
+          const data = JSON.parse(body);
+          console.log("Received download request from extension:", data.url);
+          createDownloaderWindow(data);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ success: true }));
+        } catch (error) {
+          console.error("Error processing extension request:", error);
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ success: false, error: "Invalid request" }));
+        }
+      });
+    } else {
+      res.writeHead(404);
+      res.end("Not found");
+    }
+  });
+  server.listen(EXTENSION_SERVER_PORT, "127.0.0.1", () => {
+    console.log(
+      `Extension server listening on http://127.0.0.1:${EXTENSION_SERVER_PORT}`
+    );
+  });
+  server.on("error", (error) => {
+    if (error.code === "EADDRINUSE") {
+      console.log(
+        `Port ${EXTENSION_SERVER_PORT} is already in use. Trying to reuse existing server.`
+      );
+      setTimeout(() => {
+        createExtensionServer();
+      }, 1e3);
+    } else {
+      console.error("Extension server error:", error);
+      setTimeout(() => {
+        createExtensionServer();
+      }, 2e3);
+    }
+  });
+  extensionServer = server;
+  return server;
+}
 app.whenReady().then(async () => {
   await ensureSettingsFile();
   createWindow();
+  createExtensionServer();
+  console.log("Flux desktop app ready. Extension server should be running.");
 });
 export {
   MAIN_DIST,

@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 // import { createRequire } from 'node:module'
 import fs from "node:fs/promises";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -77,6 +78,22 @@ let win: BrowserWindow | null;
 
 // Store active download items by window ID
 const activeDownloads = new Map<number, Electron.DownloadItem>();
+
+// Track downloader windows - store the most recent one
+let downloaderWindow: BrowserWindow | null = null;
+
+// Store pending download data for when window is ready
+let pendingDownloadData: {
+  url: string;
+  title?: string | null;
+  cookies?: {
+    msToken?: string | null;
+    ttChainToken?: string | null;
+  } | null;
+} | null = null;
+
+// HTTP server port for Chrome extension communication
+const EXTENSION_SERVER_PORT = 8765;
 
 function createWindow() {
   win = new BrowserWindow({
@@ -196,6 +213,150 @@ ipcMain.handle("window-close", (_event) => {
   return true;
 });
 
+// Handle request for pending download data
+ipcMain.handle("get-pending-download", () => {
+  const data = pendingDownloadData;
+  // Clear after sending
+  if (data) {
+    pendingDownloadData = null;
+  }
+  return data;
+});
+
+// Function to create or reuse a downloader window with download data
+function createDownloaderWindow(payload: {
+  url: string;
+  title?: string | null;
+  cookies?: {
+    msToken?: string | null;
+    ttChainToken?: string | null;
+  } | null;
+}) {
+  // Check if a downloader window already exists and is not destroyed
+  if (downloaderWindow && !downloaderWindow.isDestroyed()) {
+    // Window exists, send new download data to it
+    console.log("Reusing existing downloader window");
+    downloaderWindow.webContents.send("download-request", {
+      url: payload.url,
+      title: payload.title || null,
+      cookies: payload.cookies || null,
+    });
+    downloaderWindow.show();
+    downloaderWindow.focus();
+    return;
+  }
+
+  // No valid window exists, create a new one
+  console.log("Creating new downloader window");
+  const newDownloaderWindow = new BrowserWindow({
+    width: 600,
+    height: 300,
+    minWidth: 400,
+    minHeight: 250,
+    resizable: true,
+    show: false,
+    autoHideMenuBar: true,
+    center: true,
+    title: "Flux Downloader",
+    frame: false,
+    icon: iconPath,
+    webPreferences: {
+      preload: path.join(__dirname, "preload.mjs"),
+      sandbox: true,
+      contextIsolation: true,
+    },
+  });
+
+  // Store reference to the downloader window
+  downloaderWindow = newDownloaderWindow;
+
+  // Clean up reference when window is closed
+  newDownloaderWindow.on("closed", () => {
+    if (downloaderWindow === newDownloaderWindow) {
+      downloaderWindow = null;
+    }
+  });
+
+  // Show window as soon as it's ready
+  newDownloaderWindow.on("ready-to-show", () => {
+    newDownloaderWindow?.show();
+    newDownloaderWindow?.focus();
+  });
+
+  // Open DevTools for downloader window
+  newDownloaderWindow.webContents.openDevTools();
+
+  // Store payload to send after page loads
+  const downloadPayload = {
+    url: payload.url,
+    title: payload.title || null,
+    cookies: payload.cookies || null,
+  };
+
+  // Store as pending data
+  pendingDownloadData = downloadPayload;
+
+  // Wait for the window to be ready, then send download data
+  const sendDownloadData = () => {
+    if (newDownloaderWindow && !newDownloaderWindow.isDestroyed()) {
+      // Wait a bit longer to ensure React component is fully mounted and listeners are set up
+      setTimeout(() => {
+        if (newDownloaderWindow && !newDownloaderWindow.isDestroyed()) {
+          console.log("========================================");
+          console.log("📤 Sending download-request event to renderer");
+          console.log("🔗 URL:", downloadPayload.url);
+          console.log("📝 Title:", downloadPayload.title);
+          console.log("========================================");
+
+          newDownloaderWindow.webContents.send(
+            "download-request",
+            downloadPayload
+          );
+          newDownloaderWindow.show();
+          newDownloaderWindow.focus();
+          console.log("✅ Downloader window opened and data sent");
+        } else {
+          console.error("❌ Cannot send data - window is destroyed");
+        }
+      }, 1000); // Wait 1 second after page load to ensure React is ready
+    } else {
+      console.error("❌ Cannot send data - window is destroyed");
+    }
+  };
+
+  // Load the downloader page
+  if (VITE_DEV_SERVER_URL) {
+    newDownloaderWindow.loadURL(downloaderUrl);
+  } else {
+    newDownloaderWindow.loadFile(path.join(RENDERER_DIST, "downloader.html"));
+  }
+
+  // Send data once the page is loaded
+  newDownloaderWindow.webContents.once("did-finish-load", sendDownloadData);
+
+  // Fallback: If page doesn't load within 3 seconds, still show the window
+  setTimeout(() => {
+    if (
+      newDownloaderWindow &&
+      !newDownloaderWindow.isDestroyed() &&
+      !newDownloaderWindow.isVisible()
+    ) {
+      console.log("Fallback: Showing downloader window after timeout");
+      newDownloaderWindow.show();
+      newDownloaderWindow.focus();
+      // Try to send data again
+      try {
+        newDownloaderWindow.webContents.send(
+          "download-request",
+          downloadPayload
+        );
+      } catch (error) {
+        console.error("Failed to send download data in fallback:", error);
+      }
+    }
+  }, 3000);
+}
+
 // Handle download requests - creates a new window for each download
 ipcMain.handle(
   "start-download",
@@ -210,56 +371,7 @@ ipcMain.handle(
       } | null;
     }
   ) => {
-    // Create a new downloader window for each download
-    const newDownloaderWindow = new BrowserWindow({
-      width: 600,
-      height: 300,
-      minWidth: 400,
-      minHeight: 250,
-      resizable: true,
-      show: false,
-      autoHideMenuBar: true,
-      center: true,
-      title: "Flux Downloader",
-      frame: false,
-      icon: iconPath,
-      webPreferences: {
-        preload: path.join(__dirname, "preload.mjs"),
-        sandbox: true,
-        contextIsolation: true,
-      },
-    });
-
-    newDownloaderWindow.on("ready-to-show", () => {
-      newDownloaderWindow?.show();
-    });
-
-    // Open DevTools for downloader window
-    newDownloaderWindow.webContents.openDevTools();
-
-    // Wait for the window to be ready, then send download data
-    const sendDownloadData = () => {
-      if (newDownloaderWindow && !newDownloaderWindow.isDestroyed()) {
-        newDownloaderWindow.webContents.send("download-request", {
-          url: payload.url,
-          title: payload.title || null,
-          cookies: payload.cookies || null,
-        });
-        newDownloaderWindow.show();
-        newDownloaderWindow.focus();
-      }
-    };
-
-    // Load the downloader page
-    if (VITE_DEV_SERVER_URL) {
-      newDownloaderWindow.loadURL(downloaderUrl);
-    } else {
-      newDownloaderWindow.loadFile(path.join(RENDERER_DIST, "downloader.html"));
-    }
-
-    // Send data once the page is loaded
-    newDownloaderWindow.webContents.once("did-finish-load", sendDownloadData);
-
+    createDownloaderWindow(payload);
     return true;
   }
 );
@@ -782,15 +894,39 @@ ipcMain.handle("pause-download", (event) => {
 
   const downloadItem = activeDownloads.get(window.id);
   if (!downloadItem) {
-    return { success: false, error: "No active download found" };
+    return {
+      success: false,
+      error:
+        "No active download found. Pause is not supported for fetch-based downloads (YouTube/TikTok).",
+    };
   }
 
-  if (downloadItem.canResume()) {
+  // Check if download is already paused
+  if (downloadItem.isPaused()) {
+    return { success: false, error: "Download is already paused" };
+  }
+
+  // Check if download is in progress (not completed, cancelled, or interrupted)
+  const state = downloadItem.getState();
+  if (
+    state === "completed" ||
+    state === "cancelled" ||
+    state === "interrupted"
+  ) {
+    return {
+      success: false,
+      error: "Download cannot be paused in current state",
+    };
+  }
+
+  try {
     downloadItem.pause();
     return { success: true };
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Failed to pause download";
+    return { success: false, error: errorMessage };
   }
-
-  return { success: false, error: "Download cannot be paused" };
 });
 
 // Handle resume download
@@ -802,15 +938,56 @@ ipcMain.handle("resume-download", (event) => {
 
   const downloadItem = activeDownloads.get(window.id);
   if (!downloadItem) {
+    return {
+      success: false,
+      error:
+        "No active download found. Resume is not supported for fetch-based downloads (YouTube/TikTok).",
+    };
+  }
+
+  // Check if download can be resumed (i.e., is paused)
+  if (!downloadItem.canResume()) {
+    return {
+      success: false,
+      error: "Download cannot be resumed. It may not be paused.",
+    };
+  }
+
+  try {
+    downloadItem.resume();
+    return { success: true };
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Failed to resume download";
+    return { success: false, error: errorMessage };
+  }
+});
+
+// Handle cancel download
+ipcMain.handle("cancel-download", (event) => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window || window.isDestroyed()) {
+    return { success: false, error: "Window not found" };
+  }
+
+  const downloadItem = activeDownloads.get(window.id);
+  if (!downloadItem) {
     return { success: false, error: "No active download found" };
   }
 
-  if (downloadItem.canResume()) {
-    downloadItem.resume();
+  try {
+    // Cancel the download
+    downloadItem.cancel();
+    // Remove from active downloads
+    activeDownloads.delete(window.id);
+    // Notify the renderer that download was cancelled
+    window.webContents.send("download-cancelled");
     return { success: true };
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Failed to cancel download";
+    return { success: false, error: errorMessage };
   }
-
-  return { success: false, error: "Download cannot be resumed" };
 });
 
 // Handle open folder
@@ -846,7 +1023,97 @@ app.on("activate", () => {
   }
 });
 
+// Create HTTP server for Chrome extension communication
+let extensionServer: http.Server | null = null;
+
+function createExtensionServer() {
+  // If server already exists and is listening, don't create another one
+  if (extensionServer && extensionServer.listening) {
+    console.log("Extension server already running");
+    return extensionServer;
+  }
+
+  const server = http.createServer((req, res) => {
+    // Enable CORS
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+    if (req.method === "OPTIONS") {
+      res.writeHead(200);
+      res.end();
+      return;
+    }
+
+    if (req.method === "POST" && req.url === "/download") {
+      let body = "";
+
+      req.on("data", (chunk) => {
+        body += chunk.toString();
+      });
+
+      req.on("end", () => {
+        try {
+          const data = JSON.parse(body) as {
+            url: string;
+            title?: string | null;
+            cookies?: {
+              msToken?: string | null;
+              ttChainToken?: string | null;
+            } | null;
+          };
+
+          console.log("Received download request from extension:", data.url);
+
+          // Ensure downloader window is created/opened
+          createDownloaderWindow(data);
+
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ success: true }));
+        } catch (error) {
+          console.error("Error processing extension request:", error);
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ success: false, error: "Invalid request" }));
+        }
+      });
+    } else {
+      res.writeHead(404);
+      res.end("Not found");
+    }
+  });
+
+  server.listen(EXTENSION_SERVER_PORT, "127.0.0.1", () => {
+    console.log(
+      `Extension server listening on http://127.0.0.1:${EXTENSION_SERVER_PORT}`
+    );
+  });
+
+  server.on("error", (error: NodeJS.ErrnoException) => {
+    if (error.code === "EADDRINUSE") {
+      console.log(
+        `Port ${EXTENSION_SERVER_PORT} is already in use. Trying to reuse existing server.`
+      );
+      // Try to find and reuse the existing server
+      setTimeout(() => {
+        createExtensionServer();
+      }, 1000);
+    } else {
+      console.error("Extension server error:", error);
+      // Retry after a delay
+      setTimeout(() => {
+        createExtensionServer();
+      }, 2000);
+    }
+  });
+
+  extensionServer = server;
+  return server;
+}
+
 app.whenReady().then(async () => {
   await ensureSettingsFile();
   createWindow();
+  // Start extension server immediately
+  createExtensionServer();
+  console.log("Flux desktop app ready. Extension server should be running.");
 });

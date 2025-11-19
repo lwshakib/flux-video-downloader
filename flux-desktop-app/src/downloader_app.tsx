@@ -25,6 +25,7 @@ export function DownloaderApp() {
     null
   );
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [supportsPause, setSupportsPause] = useState(true); // Track if current download supports pause
 
   // Sanitize title for filename
   const sanitizeTitle = (text: string | null): string => {
@@ -63,8 +64,21 @@ export function DownloaderApp() {
   const filePath = useMemo(() => {
     if (!url) return "";
     const fileName = `${sanitizeTitle(title)}.${getFormatFromUrl(url)}`;
-    // Use forward slash for display (works on all platforms)
-    return `${downloadLocation}/${fileName}`;
+
+    // Check if downloadLocation is absolute or relative
+    // On Windows, absolute paths start with drive letter (C:\, D:\, etc.)
+    // On Unix, absolute paths start with /
+    const isAbsolute =
+      downloadLocation.startsWith("/") ||
+      /^[A-Za-z]:[\\/]/.test(downloadLocation);
+
+    if (isAbsolute) {
+      // Absolute path - use as is
+      return `${downloadLocation}/${fileName}`;
+    } else {
+      // Relative path - use forward slash for display (works on all platforms)
+      return `${downloadLocation}/${fileName}`;
+    }
   }, [url, title, downloadLocation]);
 
   useEffect(() => {
@@ -87,9 +101,31 @@ export function DownloaderApp() {
     }
   }, []);
 
+  // Log URL whenever it changes
   useEffect(() => {
+    if (url) {
+      console.log("========================================");
+      console.log("📥 URL STATE UPDATED!");
+      console.log("========================================");
+      console.log("🔗 URL:", url);
+      console.log("📝 Title:", title || "No title");
+      console.log("📁 Download Location:", downloadLocation);
+      console.log("💾 File Path:", filePath);
+      console.log("========================================");
+    } else {
+      console.log("URL is empty");
+    }
+  }, [url, title, downloadLocation, filePath]);
+
+  useEffect(() => {
+    // Log when component mounts
+    console.log("=== DownloaderApp Component Mounted ===");
+    console.log("IPC Renderer available:", !!window?.ipcRenderer);
+
     // Listen for download request from main process
     if (window?.ipcRenderer) {
+      console.log("Setting up download-request event listener...");
+
       const handleDownloadRequest = (
         _event: unknown,
         data: {
@@ -101,7 +137,24 @@ export function DownloaderApp() {
           } | null;
         }
       ) => {
-        setUrl(data.url);
+        // Very prominent logging
+        console.log("========================================");
+        console.log("🚀 DOWNLOAD REQUEST RECEIVED!");
+        console.log("========================================");
+        console.log("🔗 URL:", data.url);
+        console.log("📝 Title:", data.title || "No title");
+        console.log("🍪 Has Cookies:", !!data.cookies);
+        console.log("========================================");
+
+        // Also log as a table for better visibility
+        console.table({
+          URL: data.url,
+          Title: data.title || "No title",
+          HasCookies: !!data.cookies,
+        });
+
+        // Set the URL in the input field
+        setUrl(data.url || "");
         setTitle(data.title || null);
         setCookies(data.cookies || null);
         setDownloadProgress(null);
@@ -110,6 +163,27 @@ export function DownloaderApp() {
         setIsDownloadComplete(false);
         setCompletedFilePath(null);
         setDownloadError(null);
+
+        // Determine if pause is supported based on URL
+        // Fetch-based downloads (YouTube/TikTok) don't support pause
+        if (data.url) {
+          try {
+            const urlObj = new URL(data.url);
+            const isYouTube =
+              urlObj.hostname.includes("youtube.com") ||
+              urlObj.hostname.includes("youtu.be") ||
+              urlObj.hostname.includes("googlevideo.com");
+            const isTikTok =
+              data.cookies &&
+              (data.cookies.msToken || data.cookies.ttChainToken);
+            setSupportsPause(!(isYouTube || isTikTok));
+          } catch {
+            // If URL parsing fails, assume pause is supported
+            setSupportsPause(true);
+          }
+        } else {
+          setSupportsPause(true);
+        }
 
         // Log cookies if present
         if (
@@ -158,17 +232,58 @@ export function DownloaderApp() {
         setDownloadProgress(null);
       };
 
+      const handleDownloadCancelled = () => {
+        console.log("Download cancelled by user");
+        setDownloadError(null);
+        setIsDownloading(false);
+        setIsPaused(false);
+        setIsDownloadComplete(false);
+        setCompletedFilePath(null);
+        setDownloadProgress(null);
+      };
+
       window.ipcRenderer.on("download-request", handleDownloadRequest);
       window.ipcRenderer.on("download-progress", handleDownloadProgress);
       window.ipcRenderer.on("download-complete", handleDownloadComplete);
       window.ipcRenderer.on("download-error", handleDownloadError);
+      window.ipcRenderer.on("download-cancelled", handleDownloadCancelled);
+
+      console.log("✅ Event listeners set up successfully!");
+
+      // Request any pending download data that might have been sent before listener was ready
+      const requestPendingData = async () => {
+        try {
+          if (window?.ipcRenderer) {
+            const pendingData = await window.ipcRenderer.invoke(
+              "get-pending-download"
+            );
+            if (pendingData && pendingData.url) {
+              console.log("📦 Found pending download data:", pendingData);
+              handleDownloadRequest(null, pendingData);
+            } else {
+              console.log("No pending download data found");
+            }
+          }
+        } catch (error) {
+          console.error("Error requesting pending download data:", error);
+        }
+      };
+
+      // Request any pending data after a short delay to ensure everything is ready
+      setTimeout(() => {
+        requestPendingData();
+      }, 100);
 
       return () => {
+        console.log("Cleaning up event listeners...");
         window.ipcRenderer?.off("download-request", handleDownloadRequest);
         window.ipcRenderer?.off("download-progress", handleDownloadProgress);
         window.ipcRenderer?.off("download-complete", handleDownloadComplete);
         window.ipcRenderer?.off("download-error", handleDownloadError);
+        window.ipcRenderer?.off("download-cancelled", handleDownloadCancelled);
       };
+    } else {
+      console.error("❌ window.ipcRenderer is not available!");
     }
   }, []);
 
@@ -195,13 +310,22 @@ export function DownloaderApp() {
             variant="ghost"
             size="icon"
             className="h-6 w-6 text-base no-drag-css"
-            onClick={() => {
+            onClick={async () => {
               if (window?.ipcRenderer) {
+                // If download is in progress, cancel it first
+                if (isDownloading) {
+                  try {
+                    await window.ipcRenderer.invoke("cancel-download");
+                  } catch (error) {
+                    console.error("Error cancelling download:", error);
+                  }
+                }
+                // Close the window
                 window.ipcRenderer.invoke("window-close");
               }
             }}
           >
-            ×<span className="sr-only">Cancel</span>
+            ×<span className="sr-only">Close</span>
           </Button>
         </div>
       </header>
@@ -211,7 +335,7 @@ export function DownloaderApp() {
         </label>
         <Input
           id="download-input"
-          disabled
+          readOnly
           value={url}
           placeholder="https://example.com/video"
           className="h-9 text-xs"
@@ -233,6 +357,32 @@ export function DownloaderApp() {
             variant="outline"
             size="icon"
             className="h-9 w-9"
+            onClick={async () => {
+              if (!window?.ipcRenderer) return;
+              try {
+                const selectedPath = await window.ipcRenderer.invoke(
+                  "select-download-location"
+                );
+                if (selectedPath) {
+                  // Update the download location
+                  setDownloadLocation(selectedPath);
+
+                  // Save to settings
+                  await window.ipcRenderer.invoke("save-settings", {
+                    downloadLocation: selectedPath,
+                  });
+
+                  console.log("Download location updated to:", selectedPath);
+                }
+              } catch (error) {
+                const errorMessage =
+                  error instanceof Error
+                    ? error.message
+                    : "Failed to select download location";
+                setDownloadError(errorMessage);
+                console.error("Error selecting download location:", error);
+              }
+            }}
           >
             <FolderOpen className="h-3.5 w-3.5" />
             <span className="sr-only">Browse</span>
@@ -241,7 +391,7 @@ export function DownloaderApp() {
       </div>
       {downloadError && (
         <div className="w-full max-w-lg p-3 bg-destructive/10 border border-destructive/20 rounded-md">
-          <p className="text-xs text-destructive break-words">
+          <p className="text-xs text-destructive wrap-break-word">
             {downloadError}
           </p>
         </div>
@@ -265,17 +415,37 @@ export function DownloaderApp() {
           <Button
             variant="outline"
             className="h-8 px-3 text-xs"
-            onClick={() => {
-              if (window?.ipcRenderer) {
+            onClick={async () => {
+              if (!window?.ipcRenderer) return;
+
+              // If download is in progress, cancel it
+              if (isDownloading) {
+                try {
+                  const result = await window.ipcRenderer.invoke(
+                    "cancel-download"
+                  );
+                  if (!result?.success) {
+                    setDownloadError(
+                      result?.error || "Failed to cancel download"
+                    );
+                  }
+                } catch (error) {
+                  const errorMessage =
+                    error instanceof Error
+                      ? error.message
+                      : "Failed to cancel download";
+                  setDownloadError(errorMessage);
+                }
+              } else {
+                // If not downloading, just close the window
                 window.ipcRenderer.invoke("window-close");
               }
             }}
-            disabled={isDownloading}
           >
-            Cancel
+            {isDownloading ? "Cancel" : "Close"}
           </Button>
         )}
-        {isDownloading && (
+        {isDownloading && supportsPause && (
           <>
             {isPaused ? (
               <Button
