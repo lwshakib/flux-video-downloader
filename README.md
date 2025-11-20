@@ -287,9 +287,9 @@ graph TB
     Desktop -->|Download videos| PlatformCDN
     Desktop -->|Save files| FileSystem[(File System)]
 
-    style Extension fill:#4CAF50
-    style WebApp fill:#2196F3
-    style Desktop fill:#FF9800
+    style Extension fill:#48C774,stroke:#333,stroke-width:2px,color:#fff
+    style WebApp fill:#4A86E8,stroke:#333,stroke-width:2px,color:#fff
+    style Desktop fill:#E67E22,stroke:#333,stroke-width:2px,color:#fff
 ```
 
 ### Component Communication Flow
@@ -361,10 +361,10 @@ flowchart TD
     UserSelect --> Download[Download Video]
     Download --> End([Complete])
 
-    style RapidAPI fill:#FF6B6B
-    style Puppeteer fill:#4ECDC4
-    style Parse fill:#95E1D3
-    style Download fill:#F38181
+    style RapidAPI fill:#E74C3C,stroke:#333,stroke-width:2px,color:#fff
+    style Puppeteer fill:#1ABC9C,stroke:#333,stroke-width:2px,color:#fff
+    style Parse fill:#58D68D,stroke:#333,stroke-width:2px,color:#000
+    style Download fill:#F39C12,stroke:#333,stroke-width:2px,color:#fff
 ```
 
 ### Desktop App Workflow
@@ -409,9 +409,9 @@ flowchart LR
     Settings -->|Save Preferences| IPC
     IPC -->|Persist| FS
 
-    style DownloadMgr fill:#FF9800
-    style HTTPServer fill:#4CAF50
-    style CDN fill:#2196F3
+    style DownloadMgr fill:#E67E22,stroke:#333,stroke-width:2px,color:#fff
+    style HTTPServer fill:#48C774,stroke:#333,stroke-width:2px,color:#fff
+    style CDN fill:#4A86E8,stroke:#333,stroke-width:2px,color:#fff
 ```
 
 ### Chrome Extension Workflow
@@ -553,10 +553,10 @@ graph TB
     Extension -.->|Fetches metadata| CrawlFacebook
     Extension -.->|Fetches metadata| CrawlTikTok
 
-    style CrawlYouTube fill:#FF6B6B
-    style CrawlFacebook fill:#4ECDC4
-    style CrawlTikTok fill:#FFE66D
-    style DesktopDownload fill:#FF9800
+    style CrawlYouTube fill:#E74C3C,stroke:#333,stroke-width:2px,color:#fff
+    style CrawlFacebook fill:#1ABC9C,stroke:#333,stroke-width:2px,color:#fff
+    style CrawlTikTok fill:#F39C12,stroke:#333,stroke-width:2px,color:#fff
+    style DesktopDownload fill:#E67E22,stroke:#333,stroke-width:2px,color:#fff
 ```
 
 ### How It Works - Step by Step
@@ -584,10 +584,10 @@ flowchart TD
     L --> M[Download video]
     M --> N[Save to browser downloads]
 
-    style G fill:#FF6B6B
-    style H fill:#4ECDC4
-    style I fill:#FFE66D
-    style M fill:#95E1D3
+    style G fill:#E74C3C,stroke:#333,stroke-width:2px,color:#fff
+    style H fill:#1ABC9C,stroke:#333,stroke-width:2px,color:#fff
+    style I fill:#F39C12,stroke:#333,stroke-width:2px,color:#fff
+    style M fill:#58D68D,stroke:#333,stroke-width:2px,color:#000
 ```
 
 #### 2. Desktop App Download Process
@@ -629,9 +629,9 @@ flowchart TD
     S --> U[Show success notification]
     T --> V[Allow retry]
 
-    style J fill:#FF9800
-    style N fill:#4CAF50
-    style S fill:#2196F3
+    style J fill:#E67E22,stroke:#333,stroke-width:2px,color:#fff
+    style N fill:#48C774,stroke:#333,stroke-width:2px,color:#fff
+    style S fill:#4A86E8,stroke:#333,stroke-width:2px,color:#fff
 ```
 
 #### 3. Chrome Extension Interception Process
@@ -668,9 +668,9 @@ flowchart TD
     R --> T[Desktop App receives]
     T --> U[Download initiated]
 
-    style G fill:#4CAF50
-    style K fill:#2196F3
-    style R fill:#FF9800
+    style G fill:#48C774,stroke:#333,stroke-width:2px,color:#fff
+    style K fill:#4A86E8,stroke:#333,stroke-width:2px,color:#fff
+    style R fill:#E67E22,stroke:#333,stroke-width:2px,color:#fff
 ```
 
 ### API Endpoints
