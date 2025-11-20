@@ -5,7 +5,7 @@ import "./App.css";
 const blobUrlToSource = new Map<string, string>();
 
 // Listen for messages from background script requesting original source
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === 'GET_ORIGINAL_SOURCE' && message.blobUrl) {
     const originalSource = blobUrlToSource.get(message.blobUrl);
     sendResponse({ originalSource: originalSource || null });
