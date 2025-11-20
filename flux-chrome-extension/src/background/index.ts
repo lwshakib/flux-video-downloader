@@ -81,54 +81,76 @@ chrome.downloads.onDeterminingFilename.addListener(
         }
       }
 
-      // Extract title from filename if available
+      // Extract filename and title from download item
       let title: string | null = null;
+      let suggestedFilename: string | null = null;
       const filename =
         downloadItem.filename ||
         (downloadItem as any).suggestedFilename ||
         null;
+
       if (filename) {
-        // Remove extension and path
-        const nameWithoutExt = filename
-          .replace(/\.[^/.]+$/, "")
-          .split(/[/\\]/)
-          .pop();
+        // Extract just the filename (without path)
+        const fileNameOnly = filename.split(/[/\\]/).pop() || filename;
+        suggestedFilename = fileNameOnly;
+
+        // Remove extension for title
+        const nameWithoutExt = fileNameOnly.replace(/\.[^/.]+$/, "");
         title = nameWithoutExt || null;
       }
 
-      // Try to get page title from the tab if available
-      try {
-        // Get all tabs and find the one that matches the download URL
-        const tabs = await chrome.tabs.query({});
-        for (const tab of tabs) {
-          if (tab.url) {
-            try {
-              const tabUrl = new URL(tab.url);
-              const downloadUrl = new URL(url);
-              if (tabUrl.hostname === downloadUrl.hostname) {
-                if (tab.title) {
-                  title = tab.title;
-                  break;
-                }
-              }
-            } catch (e) {
-              // URL parsing failed, skip
+      // Try to extract filename from URL if not available
+      if (!suggestedFilename && url && !url.startsWith("blob:")) {
+        try {
+          const urlObj = new URL(url);
+          const pathname = urlObj.pathname;
+          const urlFileName = pathname.split("/").pop();
+          if (urlFileName && urlFileName.includes(".")) {
+            suggestedFilename = urlFileName;
+            if (!title) {
+              title = urlFileName.replace(/\.[^/.]+$/, "");
             }
           }
+        } catch (e) {
+          // URL parsing failed, skip
         }
+      }
 
-        // Fallback to active tab
-        if (!title) {
-          const activeTabs = await chrome.tabs.query({
-            active: true,
-            currentWindow: true,
-          });
-          if (activeTabs[0]?.title) {
-            title = activeTabs[0].title;
+      // Try to get page title from the tab if available (as fallback)
+      if (!title) {
+        try {
+          // Get all tabs and find the one that matches the download URL
+          const tabs = await chrome.tabs.query({});
+          for (const tab of tabs) {
+            if (tab.url) {
+              try {
+                const tabUrl = new URL(tab.url);
+                const downloadUrl = new URL(url);
+                if (tabUrl.hostname === downloadUrl.hostname) {
+                  if (tab.title) {
+                    title = tab.title;
+                    break;
+                  }
+                }
+              } catch (e) {
+                // URL parsing failed, skip
+              }
+            }
           }
+
+          // Fallback to active tab
+          if (!title) {
+            const activeTabs = await chrome.tabs.query({
+              active: true,
+              currentWindow: true,
+            });
+            if (activeTabs[0]?.title) {
+              title = activeTabs[0].title;
+            }
+          }
+        } catch (error) {
+          console.log("Could not get tab title:", error);
         }
-      } catch (error) {
-        console.log("Could not get tab title:", error);
       }
 
       // Send to desktop app (only if we have a valid non-blob URL)
@@ -136,6 +158,7 @@ chrome.downloads.onDeterminingFilename.addListener(
         sendToDesktopApp({
           url,
           title,
+          filename: suggestedFilename, // Include the full filename with extension
           cookies: null, // Cookies will be handled by the desktop app if needed
         }).catch((err) => console.error("Failed to send to desktop app:", err));
       } else {
@@ -147,7 +170,7 @@ chrome.downloads.onDeterminingFilename.addListener(
           iconUrl: chrome.runtime.getURL("public/icons/icon48.png"),
           title: "Flux Downloader",
           message:
-            "Cannot download blob URL. Please try downloading the video directly.",
+            "Cannot download blob URL. Please try downloading the file directly.",
         });
       }
     } catch (error) {
@@ -200,52 +223,74 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
       }
     }
 
-    // Extract title from filename if available
+    // Extract filename and title from download item
     let title: string | null = null;
+    let suggestedFilename: string | null = null;
     const filename =
       downloadItem.filename || (downloadItem as any).suggestedFilename || null;
+
     if (filename) {
-      // Remove extension and path
-      const nameWithoutExt = filename
-        .replace(/\.[^/.]+$/, "")
-        .split(/[/\\]/)
-        .pop();
+      // Extract just the filename (without path)
+      const fileNameOnly = filename.split(/[/\\]/).pop() || filename;
+      suggestedFilename = fileNameOnly;
+
+      // Remove extension for title
+      const nameWithoutExt = fileNameOnly.replace(/\.[^/.]+$/, "");
       title = nameWithoutExt || null;
     }
 
-    // Try to get page title from the tab if available
-    try {
-      // Get all tabs and find the one that matches the download URL
-      const tabs = await chrome.tabs.query({});
-      for (const tab of tabs) {
-        if (tab.url) {
-          try {
-            const tabUrl = new URL(tab.url);
-            const downloadUrl = new URL(url);
-            if (tabUrl.hostname === downloadUrl.hostname) {
-              if (tab.title) {
-                title = tab.title;
-                break;
-              }
-            }
-          } catch (e) {
-            // URL parsing failed, skip
+    // Try to extract filename from URL if not available
+    if (!suggestedFilename && url && !url.startsWith("blob:")) {
+      try {
+        const urlObj = new URL(url);
+        const pathname = urlObj.pathname;
+        const urlFileName = pathname.split("/").pop();
+        if (urlFileName && urlFileName.includes(".")) {
+          suggestedFilename = urlFileName;
+          if (!title) {
+            title = urlFileName.replace(/\.[^/.]+$/, "");
           }
         }
+      } catch (e) {
+        // URL parsing failed, skip
       }
+    }
 
-      // Fallback to active tab
-      if (!title) {
-        const activeTabs = await chrome.tabs.query({
-          active: true,
-          currentWindow: true,
-        });
-        if (activeTabs[0]?.title) {
-          title = activeTabs[0].title;
+    // Try to get page title from the tab if available (as fallback)
+    if (!title) {
+      try {
+        // Get all tabs and find the one that matches the download URL
+        const tabs = await chrome.tabs.query({});
+        for (const tab of tabs) {
+          if (tab.url) {
+            try {
+              const tabUrl = new URL(tab.url);
+              const downloadUrl = new URL(url);
+              if (tabUrl.hostname === downloadUrl.hostname) {
+                if (tab.title) {
+                  title = tab.title;
+                  break;
+                }
+              }
+            } catch (e) {
+              // URL parsing failed, skip
+            }
+          }
         }
+
+        // Fallback to active tab
+        if (!title) {
+          const activeTabs = await chrome.tabs.query({
+            active: true,
+            currentWindow: true,
+          });
+          if (activeTabs[0]?.title) {
+            title = activeTabs[0].title;
+          }
+        }
+      } catch (error) {
+        console.log("Could not get tab title:", error);
       }
-    } catch (error) {
-      console.log("Could not get tab title:", error);
     }
 
     // Send to desktop app (only if we have a valid non-blob URL)
@@ -253,6 +298,7 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
       await sendToDesktopApp({
         url,
         title,
+        filename: suggestedFilename, // Include the full filename with extension
         cookies: null, // Cookies will be handled by the desktop app if needed
       });
     } else {
@@ -264,7 +310,7 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
         iconUrl: chrome.runtime.getURL("public/icons/icon48.png"),
         title: "Flux Downloader",
         message:
-          "Cannot download blob URL. Please try downloading the video directly.",
+          "Cannot download blob URL. Please try downloading the file directly.",
       });
     }
   } catch (error) {
@@ -296,6 +342,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       sendToDesktopApp({
         url: message.url,
         title: message.title || title,
+        audioUrl: message.audioUrl || null, // Include audio URL if provided (for YouTube)
         cookies: message.cookies || null, // Include cookies if provided (for TikTok)
       })
         .then(() => {
@@ -316,6 +363,8 @@ async function sendToDesktopApp(
   data: {
     url: string;
     title: string | null;
+    filename?: string | null; // Full filename with extension
+    audioUrl?: string | null;
     cookies: { msToken?: string | null; ttChainToken?: string | null } | null;
   },
   retries = 3

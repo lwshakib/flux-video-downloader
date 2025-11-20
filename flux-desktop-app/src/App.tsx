@@ -212,7 +212,8 @@ function App() {
   const handleDownload = (
     url: string,
     title?: string | null,
-    cookies?: { msToken?: string | null; ttChainToken?: string | null } | null
+    cookies?: { msToken?: string | null; ttChainToken?: string | null } | null,
+    audioUrl?: string | null
   ) => {
     if (!window?.ipcRenderer) {
       // Fallback for web - open in new tab
@@ -225,6 +226,7 @@ function App() {
       url,
       title: title || null,
       cookies: cookies || null,
+      audioUrl: audioUrl || null,
     });
   };
 

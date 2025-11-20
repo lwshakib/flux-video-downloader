@@ -1,6 +1,16 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  Notification,
+  shell,
+  Tray,
+} from "electron";
 // import { createRequire } from 'node:module'
-import { execSync } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
@@ -43,6 +53,26 @@ const getIconPath = (): string => {
 };
 
 const iconPath = getIconPath();
+
+// Get tray icon path (smaller icon for system tray)
+const getTrayIconPath = (): string => {
+  const platform = process.platform;
+  const basePath = process.env.APP_ROOT;
+
+  switch (platform) {
+    case "win32":
+      // Windows can use ICO or PNG
+      return path.join(basePath, "public", "icons", "png", "32x32.png");
+    case "darwin":
+      // macOS uses template images for better appearance
+      return path.join(basePath, "public", "icons", "png", "32x32.png");
+    case "linux":
+    default:
+      return path.join(basePath, "public", "icons", "png", "32x32.png");
+  }
+};
+
+const trayIconPath = getTrayIconPath();
 
 const getSettingsPaths = () => {
   const homeDir = process.env.USERPROFILE || os.homedir();
@@ -156,17 +186,60 @@ const downloaderUrl = VITE_DEV_SERVER_URL
   : path.join(RENDERER_DIST, "downloader.html");
 
 let win: BrowserWindow | null;
+let tray: Tray | null = null;
 
 // Store active download items by window ID
 const activeDownloads = new Map<number, Electron.DownloadItem>();
 
+// Store active fetch-based downloads (for cancellation)
+const activeFetchDownloads = new Map<
+  number,
+  {
+    abortController: AbortController;
+    tempFilePath: string;
+    cleanup: () => Promise<void>;
+  }
+>();
+
 // Track downloader windows - store the most recent one
 let downloaderWindow: BrowserWindow | null = null;
+
+// Helper function to show download completion notification and focus window
+function notifyDownloadComplete(
+  filePath: string,
+  targetWindow?: BrowserWindow | null
+) {
+  // Show system notification
+  if (Notification.isSupported()) {
+    const fileName = path.basename(filePath);
+    const notification = new Notification({
+      title: "Download Complete",
+      body: fileName,
+      icon: iconPath,
+      urgency: "normal",
+    });
+    notification.show();
+  }
+
+  // Focus the downloader window - use provided window or fallback to stored reference
+  const windowToFocus = targetWindow || downloaderWindow;
+  if (windowToFocus && !windowToFocus.isDestroyed()) {
+    // Restore window if minimized
+    if (windowToFocus.isMinimized()) {
+      windowToFocus.restore();
+    }
+    // Show and focus the window
+    windowToFocus.show();
+    windowToFocus.focus();
+  }
+}
 
 // Store pending download data for when window is ready
 let pendingDownloadData: {
   url: string;
   title?: string | null;
+  filename?: string | null; // Full filename with extension from Chrome
+  audioUrl?: string | null;
   cookies?: {
     msToken?: string | null;
     ttChainToken?: string | null;
@@ -310,6 +383,8 @@ ipcMain.handle("get-pending-download", () => {
 function createDownloaderWindow(payload: {
   url: string;
   title?: string | null;
+  filename?: string | null; // Full filename with extension from Chrome
+  audioUrl?: string | null;
   cookies?: {
     msToken?: string | null;
     ttChainToken?: string | null;
@@ -322,6 +397,8 @@ function createDownloaderWindow(payload: {
     downloaderWindow.webContents.send("download-request", {
       url: payload.url,
       title: payload.title || null,
+      filename: payload.filename || null,
+      audioUrl: payload.audioUrl || null,
       cookies: payload.cookies || null,
     });
     downloaderWindow.show();
@@ -375,6 +452,8 @@ function createDownloaderWindow(payload: {
   const downloadPayload = {
     url: payload.url,
     title: payload.title || null,
+    filename: payload.filename || null,
+    audioUrl: payload.audioUrl || null,
     cookies: payload.cookies || null,
   };
 
@@ -450,6 +529,7 @@ ipcMain.handle(
     payload: {
       url: string;
       title?: string | null;
+      audioUrl?: string | null;
       cookies?: {
         msToken?: string | null;
         ttChainToken?: string | null;
@@ -487,10 +567,99 @@ function buildCookieHeader(
   return parts.join("; ");
 }
 
+// Merge video and audio using FFmpeg
+async function mergeVideoAudio(
+  videoPath: string,
+  audioPath: string,
+  outputPath: string,
+  signal?: AbortSignal
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    console.log("🎬 Starting FFmpeg merge...");
+    console.log("Video:", videoPath);
+    console.log("Audio:", audioPath);
+    console.log("Output:", outputPath);
+
+    // FFmpeg command to merge video and audio
+    // -i: input files
+    // -c:v copy: copy video codec (no re-encoding, faster)
+    // -c:a copy: copy audio codec (no re-encoding, faster)
+    // -map 0:v:0: use video from first input
+    // -map 1:a:0: use audio from second input
+    // -y: overwrite output file if it exists
+    const ffmpegArgs = [
+      "-i",
+      videoPath,
+      "-i",
+      audioPath,
+      "-c:v",
+      "copy",
+      "-c:a",
+      "copy",
+      "-map",
+      "0:v:0",
+      "-map",
+      "1:a:0",
+      "-y", // Overwrite output file
+      outputPath,
+    ];
+
+    const ffmpegProcess = spawn("ffmpeg", ffmpegArgs, {
+      stdio: ["ignore", "pipe", "pipe"], // Ignore stdin, pipe stdout and stderr
+    });
+
+    let errorOutput = "";
+
+    // Capture stderr (FFmpeg outputs progress to stderr)
+    ffmpegProcess.stderr.on("data", (data) => {
+      const output = data.toString();
+      errorOutput += output;
+      // Log progress (FFmpeg outputs time information)
+      if (output.includes("time=")) {
+        const timeMatch = output.match(/time=(\d+:\d+:\d+\.\d+)/);
+        if (timeMatch) {
+          console.log(`FFmpeg progress: ${timeMatch[1]}`);
+        }
+      }
+    });
+
+    // Handle process completion
+    ffmpegProcess.on("close", (code) => {
+      if (code === 0) {
+        console.log("✅ FFmpeg merge completed successfully");
+        resolve();
+      } else {
+        const error = `FFmpeg merge failed with code ${code}: ${errorOutput}`;
+        console.error("❌ FFmpeg error:", error);
+        reject(new Error(error));
+      }
+    });
+
+    // Handle process errors
+    ffmpegProcess.on("error", (error) => {
+      console.error("❌ FFmpeg process error:", error);
+      reject(error);
+    });
+
+    // Handle cancellation
+    if (signal) {
+      signal.addEventListener("abort", () => {
+        console.log("FFmpeg merge cancelled");
+        ffmpegProcess.kill("SIGTERM");
+        reject(new Error("FFmpeg merge cancelled"));
+      });
+    }
+  });
+}
+
 // Fetch with manual redirect handling (for YouTube and other videos)
-async function fetchWithRedirects(url: string, attempt = 1): Promise<Response> {
+async function fetchWithRedirects(
+  url: string,
+  attempt = 1,
+  signal?: AbortSignal
+): Promise<Response> {
   if (attempt > MAX_REDIRECTS) {
-    throw new Error("Too many redirects while downloading the video.");
+    throw new Error("Too many redirects while downloading the file.");
   }
 
   const parsed = new URL(url);
@@ -502,6 +671,7 @@ async function fetchWithRedirects(url: string, attempt = 1): Promise<Response> {
   const response = await fetch(url, {
     headers,
     redirect: "manual",
+    signal,
   });
 
   if (
@@ -512,7 +682,7 @@ async function fetchWithRedirects(url: string, attempt = 1): Promise<Response> {
     const nextUrl = new URL(response.headers.get("location") as string, url);
     console.log(`Redirect ${attempt}: ${url} -> ${nextUrl.toString()}`);
     response.body?.cancel();
-    return fetchWithRedirects(nextUrl.toString(), attempt + 1);
+    return fetchWithRedirects(nextUrl.toString(), attempt + 1, signal);
   }
 
   if (!response.ok) {
@@ -525,13 +695,236 @@ async function fetchWithRedirects(url: string, attempt = 1): Promise<Response> {
   return response;
 }
 
+// Check if server supports Range requests
+async function checkRangeSupport(url: string): Promise<boolean> {
+  try {
+    const parsed = new URL(url);
+    const headers = new Headers({
+      ...BASE_HEADERS,
+      Host: parsed.hostname,
+      Range: "bytes=0-0", // Request first byte only
+    });
+
+    const response = await fetch(url, {
+      headers,
+      redirect: "manual",
+    });
+
+    // Follow redirects if needed
+    let finalResponse = response;
+    let redirectCount = 0;
+    while (
+      finalResponse.status >= 300 &&
+      finalResponse.status < 400 &&
+      finalResponse.headers.get("location") &&
+      redirectCount < MAX_REDIRECTS
+    ) {
+      const nextUrl = new URL(
+        finalResponse.headers.get("location") as string,
+        url
+      );
+      finalResponse.body?.cancel();
+      const nextHeaders = new Headers({
+        ...BASE_HEADERS,
+        Host: nextUrl.hostname,
+        Range: "bytes=0-0",
+      });
+      finalResponse = await fetch(nextUrl.toString(), {
+        headers: nextHeaders,
+        redirect: "manual",
+      });
+      redirectCount++;
+    }
+
+    // Check if server supports Range requests (206 Partial Content)
+    const supportsRange =
+      finalResponse.status === 206 ||
+      finalResponse.headers.get("accept-ranges") === "bytes";
+    return supportsRange;
+  } catch {
+    return false;
+  }
+}
+
+// Download a specific byte range
+async function downloadRange(
+  url: string,
+  start: number,
+  end: number,
+  chunkIndex: number,
+  signal?: AbortSignal,
+  onProgress?: (chunkIndex: number, received: number, total: number) => void
+): Promise<{ chunkIndex: number; data: Buffer }> {
+  const parsed = new URL(url);
+  const headers = new Headers({
+    ...BASE_HEADERS,
+    Host: parsed.hostname,
+    Range: `bytes=${start}-${end}`,
+  });
+
+  let response = await fetch(url, {
+    headers,
+    redirect: "manual",
+    signal,
+  });
+
+  // Handle redirects
+  let redirectCount = 0;
+  while (
+    response.status >= 300 &&
+    response.status < 400 &&
+    response.headers.get("location") &&
+    redirectCount < MAX_REDIRECTS
+  ) {
+    const nextUrl = new URL(response.headers.get("location") as string, url);
+    response.body?.cancel();
+    const nextHeaders = new Headers({
+      ...BASE_HEADERS,
+      Host: nextUrl.hostname,
+      Range: `bytes=${start}-${end}`,
+    });
+    response = await fetch(nextUrl.toString(), {
+      headers: nextHeaders,
+      redirect: "manual",
+      signal,
+    });
+    redirectCount++;
+  }
+
+  if (response.status !== 206 && response.status !== 200) {
+    throw new Error(
+      `Range request failed with status ${response.status} for chunk ${chunkIndex}`
+    );
+  }
+
+  const body = response.body;
+  if (!body) {
+    throw new Error(`Response body is null for chunk ${chunkIndex}`);
+  }
+
+  const chunks: Uint8Array[] = [];
+  const reader = body.getReader();
+  let chunkReceived = 0;
+
+  try {
+    let reading = true;
+    while (reading) {
+      // Check if cancelled
+      if (signal?.aborted) {
+        reading = false;
+        reader.releaseLock();
+        throw new Error("Download cancelled");
+      }
+
+      const { done, value } = await reader.read();
+      if (done) {
+        reading = false;
+        break;
+      }
+      if (value) {
+        chunks.push(value);
+        chunkReceived += value.length;
+
+        // Report progress for this chunk
+        if (onProgress) {
+          const chunkTotal = end - start + 1;
+          onProgress(chunkIndex, chunkReceived, chunkTotal);
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  // Combine all chunks into a single buffer
+  const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const result = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  return { chunkIndex, data: Buffer.from(result) };
+}
+
+// Download file in parallel chunks (for faster downloads)
+async function downloadWithChunks(
+  url: string,
+  totalSize: number,
+  numChunks: number = 4,
+  signal?: AbortSignal,
+  onProgress?: (percent: number, received: number, total: number) => void
+): Promise<Buffer[]> {
+  const chunkSize = Math.ceil(totalSize / numChunks);
+  const chunks: Promise<{ chunkIndex: number; data: Buffer }>[] = [];
+
+  // Track progress for each chunk
+  const chunkProgress = new Map<number, number>();
+  const chunkSizes = new Map<number, number>();
+
+  // Initialize chunk sizes
+  for (let i = 0; i < numChunks; i++) {
+    const start = i * chunkSize;
+    const end = i === numChunks - 1 ? totalSize - 1 : (i + 1) * chunkSize - 1;
+    chunkSizes.set(i, end - start + 1);
+    chunkProgress.set(i, 0);
+  }
+
+  // Progress callback for individual chunks
+  const chunkProgressCallback = (
+    chunkIndex: number,
+    received: number,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _total: number
+  ) => {
+    chunkProgress.set(chunkIndex, received);
+
+    // Calculate total progress across all chunks
+    let totalReceived = 0;
+    for (let i = 0; i < numChunks; i++) {
+      totalReceived += chunkProgress.get(i) || 0;
+    }
+
+    // Report overall progress
+    if (onProgress) {
+      const percent = Math.round((totalReceived / totalSize) * 100);
+      onProgress(percent, totalReceived, totalSize);
+    }
+  };
+
+  for (let i = 0; i < numChunks; i++) {
+    const start = i * chunkSize;
+    const end = i === numChunks - 1 ? totalSize - 1 : (i + 1) * chunkSize - 1;
+
+    chunks.push(
+      downloadRange(url, start, end, i, signal, chunkProgressCallback)
+    );
+  }
+
+  // Download all chunks concurrently
+  // If signal is aborted, Promise.all will reject
+  const results = await Promise.all(chunks).catch((error) => {
+    if (signal?.aborted) {
+      throw new Error("Download cancelled");
+    }
+    throw error;
+  });
+
+  // Sort by chunk index to maintain order
+  results.sort((a, b) => a.chunkIndex - b.chunkIndex);
+
+  return results.map((r) => r.data);
+}
+
 async function fetchWithCookies(
   url: string,
   cookieHeader: string,
-  attempt = 1
+  attempt = 1,
+  signal?: AbortSignal
 ): Promise<Response> {
   if (attempt > MAX_REDIRECTS) {
-    throw new Error("Too many redirects while downloading the video.");
+    throw new Error("Too many redirects while downloading the file.");
   }
 
   const parsed = new URL(url);
@@ -551,6 +944,7 @@ async function fetchWithCookies(
   const response = await fetch(url, {
     headers,
     redirect: "manual",
+    signal,
   });
 
   if (
@@ -561,7 +955,12 @@ async function fetchWithCookies(
     const nextUrl = new URL(response.headers.get("location") as string, url);
     console.log(`TikTok redirect ${attempt}: ${url} -> ${nextUrl.toString()}`);
     response.body?.cancel();
-    return fetchWithCookies(nextUrl.toString(), cookieHeader, attempt + 1);
+    return fetchWithCookies(
+      nextUrl.toString(),
+      cookieHeader,
+      attempt + 1,
+      signal
+    );
   }
 
   if (!response.ok) {
@@ -582,6 +981,7 @@ ipcMain.handle(
     payload: {
       url: string;
       filePath: string;
+      audioUrl?: string | null;
       cookies?: {
         msToken?: string | null;
         ttChainToken?: string | null;
@@ -666,68 +1066,311 @@ ipcMain.handle(
           console.log("Cookie header built:", cookieHeader ? "Yes" : "No");
         }
 
-        try {
-          // Fetch with manual redirect handling
-          // For YouTube, we don't need cookies, so use regular fetch with redirect handling
-          // For TikTok, use fetchWithCookies
-          let response: Response;
-          if (isTikTokDownload && cookieHeader) {
-            response = await fetchWithCookies(payload.url, cookieHeader);
-          } else {
-            // For YouTube, use regular fetch but handle redirects manually
-            response = await fetchWithRedirects(payload.url);
-          }
-          console.log("Fetch response received:", {
-            status: response.status,
-            contentType: response.headers.get("content-type"),
-          });
+        // Create AbortController for cancellation
+        const abortController = new AbortController();
+        const signal = abortController.signal;
 
-          // Get content length for progress tracking
-          const contentLength = response.headers.get("content-length");
-          const totalBytes = contentLength ? parseInt(contentLength, 10) : 0;
-
-          // Write to temp file with progress tracking
-          const fileHandle = await fs.open(tempFilePath, "w");
-          const body = response.body;
-          if (!body) {
-            await fileHandle.close();
-            throw new Error("Response body is null");
-          }
-
-          let receivedBytes = 0;
-          let position = 0;
-          const reader = body.getReader();
-
+        // Store the download info for cancellation
+        const cleanup = async () => {
           try {
-            let reading = true;
-            while (reading) {
-              const { done, value } = await reader.read();
-              if (done) {
-                reading = false;
-                break;
+            await fs.unlink(tempFilePath);
+          } catch {
+            // Ignore cleanup errors
+          }
+        };
+
+        activeFetchDownloads.set(window.id, {
+          abortController,
+          tempFilePath,
+          cleanup,
+        });
+
+        try {
+          // For YouTube, try concurrent chunk downloads for faster speed
+          // For TikTok, use regular download (cookies required)
+          if (isYouTube && !isTikTokDownload) {
+            console.log("Attempting concurrent chunk download for YouTube...");
+
+            // First, get the file size by making a HEAD request
+            let totalBytes = 0;
+            let supportsRange = false;
+
+            try {
+              const parsed = new URL(payload.url);
+              const headHeaders = new Headers({
+                ...BASE_HEADERS,
+                Host: parsed.hostname,
+              });
+              let headResponse = await fetch(payload.url, {
+                method: "HEAD",
+                headers: headHeaders,
+                redirect: "manual",
+                signal,
+              });
+
+              // Handle redirects for HEAD request
+              let redirectCount = 0;
+              while (
+                headResponse.status >= 300 &&
+                headResponse.status < 400 &&
+                headResponse.headers.get("location") &&
+                redirectCount < MAX_REDIRECTS
+              ) {
+                const nextUrl = new URL(
+                  headResponse.headers.get("location") as string,
+                  payload.url
+                );
+                headResponse.body?.cancel();
+                const nextHeaders = new Headers({
+                  ...BASE_HEADERS,
+                  Host: nextUrl.hostname,
+                });
+                headResponse = await fetch(nextUrl.toString(), {
+                  method: "HEAD",
+                  headers: nextHeaders,
+                  redirect: "manual",
+                  signal,
+                });
+                redirectCount++;
               }
 
-              if (value) {
-                const buffer = Buffer.from(value);
-                await fileHandle.write(buffer, 0, buffer.length, position);
-                position += buffer.length;
-                receivedBytes += buffer.length;
+              const contentLength = headResponse.headers.get("content-length");
+              totalBytes = contentLength ? parseInt(contentLength, 10) : 0;
 
-                // Send progress update
-                if (totalBytes > 0) {
-                  const percent = Math.round(
-                    (receivedBytes / totalBytes) * 100
-                  );
-                  window.webContents.send("download-progress", {
-                    percent: isNaN(percent) ? 0 : percent,
-                    received: receivedBytes,
-                    total: totalBytes,
-                  });
-                }
+              // Check Range support
+              supportsRange =
+                headResponse.status === 206 ||
+                headResponse.headers.get("accept-ranges") === "bytes";
+            } catch (error) {
+              // If HEAD fails, try a regular GET request to get size
+              console.log(
+                "HEAD request failed, trying GET to get file size..."
+              );
+              try {
+                const response = await fetchWithRedirects(
+                  payload.url,
+                  1,
+                  signal
+                );
+                const contentLength = response.headers.get("content-length");
+                totalBytes = contentLength ? parseInt(contentLength, 10) : 0;
+                // Cancel the body since we only need headers
+                response.body?.cancel();
+                // Check Range support (we'll check with signal)
+                supportsRange = await checkRangeSupport(payload.url);
+              } catch {
+                // If all else fails, we'll use sequential download
+                console.log(
+                  "Could not determine file size, using sequential download"
+                );
+                totalBytes = 0;
+                supportsRange = false;
               }
             }
-          } finally {
-            await fileHandle.close();
+
+            // Check if Range requests are supported and file is large enough to benefit
+            const shouldUseChunks =
+              supportsRange && totalBytes > 5 * 1024 * 1024; // 5MB minimum
+
+            if (shouldUseChunks) {
+              console.log(
+                `Using concurrent chunk download (${totalBytes} bytes)`
+              );
+
+              // Determine optimal number of chunks (4-8 chunks for best performance)
+              const numChunks = Math.min(
+                8,
+                Math.max(4, Math.ceil(totalBytes / (10 * 1024 * 1024)))
+              ); // ~10MB per chunk
+              console.log(`Downloading in ${numChunks} concurrent chunks...`);
+
+              // Progress callback for chunk downloads
+              const progressCallback = (
+                percent: number,
+                received: number,
+                total: number
+              ) => {
+                window.webContents.send("download-progress", {
+                  percent: isNaN(percent) ? 0 : percent,
+                  received: received,
+                  total: total,
+                });
+              };
+
+              // Download chunks concurrently
+              const chunkBuffers = await downloadWithChunks(
+                payload.url,
+                totalBytes,
+                numChunks,
+                signal,
+                progressCallback
+              );
+
+              // Write all chunks to file
+              const fileHandle = await fs.open(tempFilePath, "w");
+              try {
+                let position = 0;
+
+                for (const chunkBuffer of chunkBuffers) {
+                  // Check if cancelled before writing
+                  if (signal.aborted) {
+                    throw new Error("Download cancelled");
+                  }
+
+                  await fileHandle.write(
+                    chunkBuffer,
+                    0,
+                    chunkBuffer.length,
+                    position
+                  );
+                  position += chunkBuffer.length;
+
+                  // Progress is already reported during download, but send final update
+                  // to ensure 100% is shown after writing completes
+                  if (position >= totalBytes) {
+                    window.webContents.send("download-progress", {
+                      percent: 100,
+                      received: totalBytes,
+                      total: totalBytes,
+                    });
+                  }
+                }
+              } finally {
+                await fileHandle.close();
+              }
+
+              console.log("Concurrent chunk download completed");
+            } else {
+              // Fall back to regular sequential download
+              console.log(
+                "Using sequential download (Range not supported or file too small)"
+              );
+              const response = await fetchWithRedirects(payload.url, 1, signal);
+              const contentLength = response.headers.get("content-length");
+              const totalBytes = contentLength
+                ? parseInt(contentLength, 10)
+                : 0;
+
+              const fileHandle = await fs.open(tempFilePath, "w");
+              const body = response.body;
+              if (!body) {
+                await fileHandle.close();
+                throw new Error("Response body is null");
+              }
+
+              let receivedBytes = 0;
+              let position = 0;
+              const reader = body.getReader();
+
+              try {
+                let reading = true;
+                while (reading) {
+                  // Check if cancelled
+                  if (signal.aborted) {
+                    reading = false;
+                    throw new Error("Download cancelled");
+                  }
+
+                  const { done, value } = await reader.read();
+                  if (done) {
+                    reading = false;
+                    break;
+                  }
+
+                  if (value) {
+                    const buffer = Buffer.from(value);
+                    await fileHandle.write(buffer, 0, buffer.length, position);
+                    position += buffer.length;
+                    receivedBytes += buffer.length;
+
+                    // Send progress update
+                    if (totalBytes > 0) {
+                      const percent = Math.round(
+                        (receivedBytes / totalBytes) * 100
+                      );
+                      window.webContents.send("download-progress", {
+                        percent: isNaN(percent) ? 0 : percent,
+                        received: receivedBytes,
+                        total: totalBytes,
+                      });
+                    }
+                  }
+                }
+              } finally {
+                await fileHandle.close();
+              }
+            }
+          } else {
+            // For TikTok or non-YouTube, use regular download
+            let response: Response;
+            if (isTikTokDownload && cookieHeader) {
+              response = await fetchWithCookies(
+                payload.url,
+                cookieHeader,
+                1,
+                signal
+              );
+            } else {
+              response = await fetchWithRedirects(payload.url, 1, signal);
+            }
+            console.log("Fetch response received:", {
+              status: response.status,
+              contentType: response.headers.get("content-type"),
+            });
+
+            // Get content length for progress tracking
+            const contentLength = response.headers.get("content-length");
+            const totalBytes = contentLength ? parseInt(contentLength, 10) : 0;
+
+            // Write to temp file with progress tracking
+            const fileHandle = await fs.open(tempFilePath, "w");
+            const body = response.body;
+            if (!body) {
+              await fileHandle.close();
+              throw new Error("Response body is null");
+            }
+
+            let receivedBytes = 0;
+            let position = 0;
+            const reader = body.getReader();
+
+            try {
+              let reading = true;
+              while (reading) {
+                // Check if cancelled
+                if (signal.aborted) {
+                  reading = false;
+                  throw new Error("Download cancelled");
+                }
+
+                const { done, value } = await reader.read();
+                if (done) {
+                  reading = false;
+                  break;
+                }
+
+                if (value) {
+                  const buffer = Buffer.from(value);
+                  await fileHandle.write(buffer, 0, buffer.length, position);
+                  position += buffer.length;
+                  receivedBytes += buffer.length;
+
+                  // Send progress update
+                  if (totalBytes > 0) {
+                    const percent = Math.round(
+                      (receivedBytes / totalBytes) * 100
+                    );
+                    window.webContents.send("download-progress", {
+                      percent: isNaN(percent) ? 0 : percent,
+                      received: receivedBytes,
+                      total: totalBytes,
+                    });
+                  }
+                }
+              }
+            } finally {
+              await fileHandle.close();
+            }
           }
 
           console.log("Download completed, copying to final location");
@@ -763,23 +1406,377 @@ ipcMain.handle(
             console.warn("Failed to cleanup temp file:", cleanupError);
           }
 
+          // Download audio file if provided (for YouTube videos)
+          if (isYouTube && payload.audioUrl && payload.audioUrl.trim() !== "") {
+            try {
+              console.log("🎵 Starting audio download for YouTube video...");
+
+              // Generate audio file path (same location, different extension)
+              const audioExt = ".m4a"; // YouTube audio is typically m4a
+              const audioFileName = `${path.basename(
+                finalPath,
+                path.extname(finalPath)
+              )}_audio${audioExt}`;
+              const audioFilePath = path.join(
+                path.dirname(finalPath),
+                audioFileName
+              );
+
+              // Create temp path for audio
+              const audioTempPath = path.join(
+                tempDir,
+                `${path.basename(
+                  audioFileName,
+                  audioExt
+                )}-${Date.now()}${audioExt}`
+              );
+
+              // Get audio file size and check Range support (same as video)
+              let audioTotalBytes = 0;
+              let audioSupportsRange = false;
+
+              try {
+                const parsed = new URL(payload.audioUrl);
+                const headHeaders = new Headers({
+                  ...BASE_HEADERS,
+                  Host: parsed.hostname,
+                });
+                let headResponse = await fetch(payload.audioUrl, {
+                  method: "HEAD",
+                  headers: headHeaders,
+                  redirect: "manual",
+                  signal,
+                });
+
+                // Handle redirects for HEAD request
+                let redirectCount = 0;
+                while (
+                  headResponse.status >= 300 &&
+                  headResponse.status < 400 &&
+                  headResponse.headers.get("location") &&
+                  redirectCount < MAX_REDIRECTS
+                ) {
+                  const nextUrl = new URL(
+                    headResponse.headers.get("location") as string,
+                    payload.audioUrl
+                  );
+                  headResponse.body?.cancel();
+                  const nextHeaders = new Headers({
+                    ...BASE_HEADERS,
+                    Host: nextUrl.hostname,
+                  });
+                  headResponse = await fetch(nextUrl.toString(), {
+                    method: "HEAD",
+                    headers: nextHeaders,
+                    redirect: "manual",
+                    signal,
+                  });
+                  redirectCount++;
+                }
+
+                const contentLength =
+                  headResponse.headers.get("content-length");
+                audioTotalBytes = contentLength
+                  ? parseInt(contentLength, 10)
+                  : 0;
+
+                // Check Range support
+                audioSupportsRange =
+                  headResponse.status === 206 ||
+                  headResponse.headers.get("accept-ranges") === "bytes";
+              } catch (error) {
+                // If HEAD fails, try a regular GET request to get size
+                console.log(
+                  "Audio HEAD request failed, trying GET to get file size..."
+                );
+                try {
+                  const response = await fetchWithRedirects(
+                    payload.audioUrl,
+                    1,
+                    signal
+                  );
+                  const contentLength = response.headers.get("content-length");
+                  audioTotalBytes = contentLength
+                    ? parseInt(contentLength, 10)
+                    : 0;
+                  // Cancel the body since we only need headers
+                  response.body?.cancel();
+                  // Check Range support
+                  audioSupportsRange = await checkRangeSupport(
+                    payload.audioUrl
+                  );
+                } catch {
+                  // If all else fails, we'll use sequential download
+                  console.log(
+                    "Could not determine audio file size, using sequential download"
+                  );
+                  audioTotalBytes = 0;
+                  audioSupportsRange = false;
+                }
+              }
+
+              // Check if Range requests are supported and file is large enough to benefit
+              const shouldUseChunks =
+                audioSupportsRange && audioTotalBytes > 2 * 1024 * 1024; // 2MB minimum for audio
+
+              if (shouldUseChunks) {
+                console.log(
+                  `Using concurrent chunk download for audio (${audioTotalBytes} bytes)`
+                );
+
+                // Determine optimal number of chunks (4-8 chunks for best performance)
+                const numChunks = Math.min(
+                  8,
+                  Math.max(4, Math.ceil(audioTotalBytes / (5 * 1024 * 1024)))
+                ); // ~5MB per chunk for audio
+                console.log(
+                  `Downloading audio in ${numChunks} concurrent chunks...`
+                );
+
+                // Progress callback for audio chunk downloads
+                const audioProgressCallback = (
+                  percent: number,
+                  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                  _received: number,
+                  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                  _total: number
+                ) => {
+                  // Log audio progress (video is already at 100%)
+                  console.log(`Audio download: ${percent}%`);
+                };
+
+                // Download audio chunks concurrently
+                const audioChunkBuffers = await downloadWithChunks(
+                  payload.audioUrl,
+                  audioTotalBytes,
+                  numChunks,
+                  signal,
+                  audioProgressCallback
+                );
+
+                // Write all audio chunks to file
+                const audioFileHandle = await fs.open(audioTempPath, "w");
+                try {
+                  let position = 0;
+
+                  for (const chunkBuffer of audioChunkBuffers) {
+                    // Check if cancelled before writing
+                    if (signal.aborted) {
+                      throw new Error("Download cancelled");
+                    }
+
+                    await audioFileHandle.write(
+                      chunkBuffer,
+                      0,
+                      chunkBuffer.length,
+                      position
+                    );
+                    position += chunkBuffer.length;
+                  }
+                } finally {
+                  await audioFileHandle.close();
+                }
+
+                console.log("Concurrent audio chunk download completed");
+              } else {
+                // Fall back to regular sequential download
+                console.log(
+                  "Using sequential download for audio (Range not supported or file too small)"
+                );
+                const audioResponse = await fetchWithRedirects(
+                  payload.audioUrl,
+                  1,
+                  signal
+                );
+                const audioContentLength =
+                  audioResponse.headers.get("content-length");
+                audioTotalBytes = audioContentLength
+                  ? parseInt(audioContentLength, 10)
+                  : 0;
+
+                const audioFileHandle = await fs.open(audioTempPath, "w");
+                const audioBody = audioResponse.body;
+                if (!audioBody) {
+                  await audioFileHandle.close();
+                  throw new Error("Audio response body is null");
+                }
+
+                let audioReceivedBytes = 0;
+                let audioPosition = 0;
+                const audioReader = audioBody.getReader();
+
+                try {
+                  let reading = true;
+                  while (reading) {
+                    // Check if cancelled
+                    if (signal.aborted) {
+                      reading = false;
+                      throw new Error("Download cancelled");
+                    }
+
+                    const { done, value } = await audioReader.read();
+                    if (done) {
+                      reading = false;
+                      break;
+                    }
+
+                    if (value) {
+                      const buffer = Buffer.from(value);
+                      await audioFileHandle.write(
+                        buffer,
+                        0,
+                        buffer.length,
+                        audioPosition
+                      );
+                      audioPosition += buffer.length;
+                      audioReceivedBytes += buffer.length;
+
+                      // Log audio progress
+                      if (audioTotalBytes > 0) {
+                        const audioPercent = Math.round(
+                          (audioReceivedBytes / audioTotalBytes) * 100
+                        );
+                        console.log(`Audio download: ${audioPercent}%`);
+                      }
+                    }
+                  }
+                } finally {
+                  await audioFileHandle.close();
+                }
+              }
+
+              // Handle file name conflicts for audio
+              let finalAudioPath = audioFilePath;
+              let audioCounter = 1;
+              let audioFileExists = true;
+
+              while (audioFileExists) {
+                try {
+                  await fs.access(finalAudioPath);
+                  const dir = path.dirname(audioFilePath);
+                  const ext = path.extname(audioFilePath);
+                  const base = path.basename(audioFilePath, ext);
+                  finalAudioPath = path.join(
+                    dir,
+                    `${base} (${audioCounter})${ext}`
+                  );
+                  audioCounter++;
+                } catch {
+                  audioFileExists = false;
+                }
+              }
+
+              // Copy audio from temp to final location
+              await fs.copyFile(audioTempPath, finalAudioPath);
+              console.log("✅ Audio file downloaded:", finalAudioPath);
+
+              // Clean up temp audio file
+              try {
+                await fs.unlink(audioTempPath);
+              } catch (cleanupError) {
+                console.warn(
+                  "Failed to cleanup temp audio file:",
+                  cleanupError
+                );
+              }
+
+              // Merge video and audio into a single file
+              try {
+                console.log("🎬 Merging video and audio...");
+
+                // Create a temporary merged file path
+                const mergedTempPath = path.join(
+                  tempDir,
+                  `merged-${Date.now()}${path.extname(finalPath)}`
+                );
+
+                // Merge video and audio using FFmpeg
+                await mergeVideoAudio(
+                  finalPath,
+                  finalAudioPath,
+                  mergedTempPath,
+                  signal
+                );
+
+                // Replace the original video file with the merged version
+                await fs.copyFile(mergedTempPath, finalPath);
+                console.log("✅ Video and audio merged successfully");
+
+                // Clean up temp merged file
+                try {
+                  await fs.unlink(mergedTempPath);
+                } catch (cleanupError) {
+                  console.warn(
+                    "Failed to cleanup temp merged file:",
+                    cleanupError
+                  );
+                }
+
+                // Delete the separate audio file since it's now merged
+                try {
+                  await fs.unlink(finalAudioPath);
+                  console.log(
+                    "✅ Separate audio file removed (merged into video)"
+                  );
+                } catch (cleanupError) {
+                  console.warn(
+                    "Failed to remove separate audio file:",
+                    cleanupError
+                  );
+                }
+              } catch (mergeError) {
+                // Log error but don't fail - user still has video and audio files
+                console.error(
+                  "❌ Failed to merge video and audio:",
+                  mergeError
+                );
+                console.log("Video and audio files saved separately");
+                // Don't throw - user still has both files
+              }
+            } catch (audioError) {
+              // Log error but don't fail the entire download
+              console.error("❌ Audio download failed:", audioError);
+              console.log("Continuing with video-only download...");
+            }
+          }
+
+          // Remove from active downloads
+          activeFetchDownloads.delete(window.id);
+
           // Send completion message
           window.webContents.send("download-complete", {
             filePath: finalPath,
           });
 
+          // Show notification and focus window
+          notifyDownloadComplete(finalPath, window);
+
           return { success: true, filePath: finalPath };
         } catch (fetchError) {
-          const errorMessage =
-            fetchError instanceof Error
-              ? fetchError.message
-              : `Failed to download ${isYouTube ? "YouTube" : "TikTok"} video`;
-          console.error(
-            `${isYouTube ? "YouTube" : "TikTok"} download error:`,
-            errorMessage,
-            fetchError
-          );
-          window.webContents.send("download-error", { error: errorMessage });
+          // Remove from active downloads on error
+          activeFetchDownloads.delete(window.id);
+
+          const isCancelled =
+            fetchError instanceof Error &&
+            (fetchError.message === "Download cancelled" || signal.aborted);
+
+          const errorMessage = isCancelled
+            ? "Download cancelled"
+            : fetchError instanceof Error
+            ? fetchError.message
+            : `Failed to download ${isYouTube ? "YouTube" : "TikTok"} video`;
+
+          if (isCancelled) {
+            console.log("Download cancelled by user");
+            window.webContents.send("download-cancelled");
+          } else {
+            console.error(
+              `${isYouTube ? "YouTube" : "TikTok"} download error:`,
+              errorMessage,
+              fetchError
+            );
+            window.webContents.send("download-error", { error: errorMessage });
+          }
 
           // Clean up temp file on error
           try {
@@ -795,6 +1792,8 @@ ipcMain.handle(
       // For non-TikTok downloads, use Electron's downloadURL
       return new Promise((resolve) => {
         let downloadResolved = false;
+        let downloadStarted = false; // Track if download has started
+        let timeoutId: NodeJS.Timeout | null = null;
 
         // Set up will-download listener BEFORE calling downloadURL
         // This prevents the default save dialog from appearing
@@ -808,6 +1807,15 @@ ipcMain.handle(
           const itemBaseUrl = itemUrl.split("?")[0];
 
           if (itemUrl === payload.url || itemBaseUrl === baseUrl) {
+            // Mark download as started
+            downloadStarted = true;
+
+            // Clear the timeout since download has started
+            if (timeoutId) {
+              clearTimeout(timeoutId);
+              timeoutId = null;
+            }
+
             // Store the download item for pause/resume functionality
             activeDownloads.set(window.id, item);
 
@@ -890,6 +1898,9 @@ ipcMain.handle(
                       window.webContents.send("download-complete", {
                         filePath: finalPath,
                       });
+
+                      // Show notification and focus window
+                      notifyDownloadComplete(finalPath, window);
                     } catch (copyError) {
                       const errorMessage =
                         copyError instanceof Error
@@ -937,9 +1948,10 @@ ipcMain.handle(
         // Start the download
         window.webContents.downloadURL(payload.url);
 
-        // Timeout fallback
-        setTimeout(() => {
-          if (!downloadResolved) {
+        // Timeout fallback - only fires if download hasn't started
+        // Increased to 60 seconds to allow slow servers to respond
+        timeoutId = setTimeout(() => {
+          if (!downloadStarted && !downloadResolved) {
             downloadResolved = true;
             // Clean up listener on timeout
             windowSession.removeListener("will-download", willDownloadHandler);
@@ -958,7 +1970,7 @@ ipcMain.handle(
             window.webContents.send("download-error", { error });
             resolve({ success: false, error });
           }
-        }, 30000); // 30 second timeout
+        }, 60000); // 60 second timeout for download to start
       });
     } catch (error) {
       const errorMessage =
@@ -1049,12 +2061,40 @@ ipcMain.handle("resume-download", (event) => {
 });
 
 // Handle cancel download
-ipcMain.handle("cancel-download", (event) => {
+ipcMain.handle("cancel-download", async (event) => {
   const window = BrowserWindow.fromWebContents(event.sender);
   if (!window || window.isDestroyed()) {
     return { success: false, error: "Window not found" };
   }
 
+  // Check for fetch-based download first
+  const fetchDownload = activeFetchDownloads.get(window.id);
+  if (fetchDownload) {
+    try {
+      console.log("Cancelling fetch-based download...");
+      // Abort all fetch requests
+      fetchDownload.abortController.abort();
+
+      // Clean up temp file
+      await fetchDownload.cleanup();
+
+      // Remove from active downloads
+      activeFetchDownloads.delete(window.id);
+
+      // Notify the renderer that download was cancelled
+      window.webContents.send("download-cancelled");
+      return { success: true };
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to cancel download";
+      console.error("Error cancelling fetch download:", errorMessage);
+      // Still remove from active downloads even if cleanup fails
+      activeFetchDownloads.delete(window.id);
+      return { success: false, error: errorMessage };
+    }
+  }
+
+  // Check for Electron DownloadItem
   const downloadItem = activeDownloads.get(window.id);
   if (!downloadItem) {
     return { success: false, error: "No active download found" };
@@ -1090,10 +2130,19 @@ ipcMain.handle("open-folder", async (_event, filePath: string) => {
   }
 });
 
-// Quit when all windows are closed, except on macOS. There, it's common
-// for applications and their menu bar to stay active until the user quits
-// explicitly with Cmd + Q.
+// Quit when all windows are closed, except on macOS or if tray exists
+// With tray, app should stay running in background
 app.on("window-all-closed", () => {
+  // Don't quit if tray exists (app runs in background)
+  if (tray) {
+    // Hide all windows but keep app running
+    BrowserWindow.getAllWindows().forEach((window) => {
+      window.hide();
+    });
+    return;
+  }
+
+  // On macOS, keep app running even without windows
   if (process.platform !== "darwin") {
     app.quit();
     win = null;
@@ -1142,6 +2191,8 @@ function createExtensionServer() {
           const data = JSON.parse(body) as {
             url: string;
             title?: string | null;
+            filename?: string | null; // Full filename with extension from Chrome
+            audioUrl?: string | null;
             cookies?: {
               msToken?: string | null;
               ttChainToken?: string | null;
@@ -1149,6 +2200,12 @@ function createExtensionServer() {
           };
 
           console.log("Received download request from extension:", data.url);
+          if (data.audioUrl) {
+            console.log(
+              "Audio URL provided:",
+              data.audioUrl.substring(0, 100) + "..."
+            );
+          }
 
           // Ensure downloader window is created/opened
           createDownloaderWindow(data);
@@ -1195,6 +2252,102 @@ function createExtensionServer() {
   return server;
 }
 
+// Create system tray
+function createTray() {
+  // Check if tray icon file exists
+  try {
+    // Use sync check for tray icon
+    if (!fsSync.existsSync(trayIconPath)) {
+      console.warn("Tray icon not found, using default icon");
+      // Fallback to main icon if tray icon doesn't exist
+      tray = new Tray(iconPath);
+    } else {
+      tray = new Tray(trayIconPath);
+    }
+  } catch (error) {
+    console.warn("Error loading tray icon, using default:", error);
+    tray = new Tray(iconPath);
+  }
+
+  // Create context menu for tray
+  const contextMenu = Menu.buildFromTemplate([
+    {
+      label: "Show Window",
+      click: () => {
+        if (win && !win.isDestroyed()) {
+          if (win.isMinimized()) {
+            win.restore();
+          }
+          win.show();
+          win.focus();
+        } else {
+          createWindow();
+        }
+      },
+    },
+    {
+      label: "New Download",
+      click: () => {
+        // Create a new downloader window
+        createDownloaderWindow({
+          url: "",
+          title: null,
+          filename: null,
+          audioUrl: null,
+          cookies: null,
+        });
+      },
+    },
+    { type: "separator" },
+    {
+      label: "Quit",
+      click: () => {
+        // Destroy tray before quitting
+        if (tray) {
+          tray.destroy();
+          tray = null;
+        }
+        app.quit();
+      },
+    },
+  ]);
+
+  tray.setContextMenu(contextMenu);
+  tray.setToolTip("Flux Downloader");
+
+  // Handle tray click events
+  tray.on("click", () => {
+    // On Windows/Linux, show window on click
+    if (process.platform !== "darwin") {
+      if (win && !win.isDestroyed()) {
+        if (win.isMinimized()) {
+          win.restore();
+        }
+        win.show();
+        win.focus();
+      } else {
+        createWindow();
+      }
+    }
+  });
+
+  // On macOS, right-click shows context menu, left-click does nothing by default
+  // But we can handle double-click
+  tray.on("double-click", () => {
+    if (win && !win.isDestroyed()) {
+      if (win.isMinimized()) {
+        win.restore();
+      }
+      win.show();
+      win.focus();
+    } else {
+      createWindow();
+    }
+  });
+
+  console.log("System tray created");
+}
+
 app.whenReady().then(async () => {
   // Verify required dependencies before starting
   const depsOk = await verifyDependencies();
@@ -1208,6 +2361,8 @@ app.whenReady().then(async () => {
 
   await ensureSettingsFile();
   createWindow();
+  // Create system tray
+  createTray();
   // Start extension server immediately
   createExtensionServer();
   console.log("Flux desktop app ready. Extension server should be running.");

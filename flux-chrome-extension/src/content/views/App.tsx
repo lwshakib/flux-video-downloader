@@ -600,10 +600,14 @@ function DownloadVideoButton({ video }: { video: HTMLVideoElement }) {
         ttChainToken: tiktokData.tokens.ttChainToken || null,
       } : null;
       
+      // For YouTube, include audio URL if available
+      const audioUrl = youtubeData?.audio?.url || null;
+      
       chrome.runtime.sendMessage({
         type: 'DOWNLOAD_VIDEO',
         url: url,
         title: `${title}-${label}`,
+        audioUrl: audioUrl,
         cookies: cookies
       }, (response) => {
         if (chrome.runtime.lastError) {

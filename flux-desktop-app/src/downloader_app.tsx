@@ -9,9 +9,10 @@ import "./index.css";
 
 export function DownloaderApp() {
   const [url, setUrl] = useState("");
-  // Store title and cookies for future download implementation
-  // These will be used when implementing the actual download functionality
+  // Store title, filename, audioUrl and cookies for download
   const [title, setTitle] = useState<string | null>(null);
+  const [filename, setFilename] = useState<string | null>(null); // Full filename with extension from Chrome
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [cookies, setCookies] = useState<{
     msToken?: string | null;
     ttChainToken?: string | null;
@@ -26,11 +27,13 @@ export function DownloaderApp() {
   );
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [supportsPause, setSupportsPause] = useState(true); // Track if current download supports pause
-  const [customDownloadPath, setCustomDownloadPath] = useState<string | null>(null); // Custom path for this file only
+  const [customDownloadPath, setCustomDownloadPath] = useState<string | null>(
+    null
+  ); // Custom path for this file only
 
   // Sanitize title for filename
   const sanitizeTitle = (text: string | null): string => {
-    if (!text) return "video";
+    if (!text) return "download";
     return text
       .replace(/[<>:"/\\|?*]/g, "_")
       .replace(/\s+/g, "_")
@@ -39,44 +42,120 @@ export function DownloaderApp() {
       .substring(0, 100);
   };
 
-  // Extract format from URL
-  const getFormatFromUrl = (url: string): string => {
+  // Extract file extension from filename, URL, or Content-Type
+  const getFileExtension = (url: string, filename: string | null): string => {
+    // First, try to get extension from filename (most reliable)
+    if (filename) {
+      const extMatch = filename.match(/\.([^.]+)$/);
+      if (extMatch && extMatch[1]) {
+        return extMatch[1].toLowerCase();
+      }
+    }
+
+    // Try to extract from URL pathname
+    try {
+      const urlObj = new URL(url);
+      const pathname = urlObj.pathname;
+      const urlExtMatch = pathname.match(/\.([^.]+)$/);
+      if (urlExtMatch && urlExtMatch[1]) {
+        return urlExtMatch[1].toLowerCase();
+      }
+    } catch (e) {
+      // URL parsing failed, continue
+    }
+
+    // Try to extract from URL query parameters or fragments
     const urlLower = url.toLowerCase();
-    if (urlLower.includes(".mp4") || urlLower.includes("format=mp4")) {
+    const commonFormats = [
+      "mp4",
+      "webm",
+      "mkv",
+      "avi",
+      "mov",
+      "flv",
+      "wmv",
+      "m4v",
+      "mp3",
+      "wav",
+      "flac",
+      "aac",
+      "ogg",
+      "m4a",
+      "pdf",
+      "doc",
+      "docx",
+      "xls",
+      "xlsx",
+      "ppt",
+      "pptx",
+      "zip",
+      "rar",
+      "7z",
+      "tar",
+      "gz",
+      "jpg",
+      "jpeg",
+      "png",
+      "gif",
+      "bmp",
+      "svg",
+      "webp",
+      "txt",
+      "csv",
+      "json",
+      "xml",
+      "html",
+      "css",
+      "js",
+    ];
+
+    for (const format of commonFormats) {
+      if (
+        urlLower.includes(`.${format}`) ||
+        urlLower.includes(`format=${format}`)
+      ) {
+        return format;
+      }
+    }
+
+    // Default to mp4 for video URLs, or generic "bin" for unknown
+    if (
+      urlLower.includes("video") ||
+      urlLower.includes("youtube") ||
+      urlLower.includes("tiktok")
+    ) {
       return "mp4";
     }
-    if (urlLower.includes(".webm") || urlLower.includes("format=webm")) {
-      return "webm";
-    }
-    if (urlLower.includes(".mkv") || urlLower.includes("format=mkv")) {
-      return "mkv";
-    }
-    if (urlLower.includes(".m3u8") || urlLower.includes("format=m3u8")) {
-      return "m3u8";
-    }
-    if (urlLower.includes(".flv") || urlLower.includes("format=flv")) {
-      return "flv";
-    }
-    // Default to mp4
-    return "mp4";
+    return "bin"; // Generic binary file
   };
 
   // Compute the file path that will be used for download
   const filePath = useMemo(() => {
     if (!url) return "";
-    const fileName = `${sanitizeTitle(title)}.${getFormatFromUrl(url)}`;
-    
+
+    // Use filename from Chrome if available, otherwise construct from title
+    let fileName: string;
+    if (filename) {
+      // Use the filename from Chrome directly (already includes extension)
+      fileName = filename;
+    } else {
+      // Fall back to constructing filename from title and extension
+      const extension = getFileExtension(url, null);
+      const baseName = sanitizeTitle(title) || "download";
+      fileName = `${baseName}.${extension}`;
+    }
+
     // If custom path is set, use it; otherwise use default download location
     const basePath = customDownloadPath || downloadLocation;
-    
+
     // Normalize path separators (use forward slash for display)
-    const normalizedBase = basePath.replace(/\\/g, '/');
-    const normalizedFileName = fileName.replace(/\\/g, '/');
-    
+    const normalizedBase = basePath.replace(/\\/g, "/");
+    const normalizedFileName = fileName.replace(/\\/g, "/");
+
     // Join path (handle trailing slashes)
-    const cleanBase = normalizedBase.replace(/\/$/, '');
+    const cleanBase = normalizedBase.replace(/\/$/, "");
     return `${cleanBase}/${normalizedFileName}`;
-  }, [url, title, downloadLocation, customDownloadPath]);
+  }, [url, title, filename, downloadLocation, customDownloadPath]);
 
   useEffect(() => {
     // Load settings to get download location
@@ -128,6 +207,8 @@ export function DownloaderApp() {
         data: {
           url: string;
           title?: string | null;
+          filename?: string | null; // Full filename with extension from Chrome
+          audioUrl?: string | null;
           cookies?: {
             msToken?: string | null;
             ttChainToken?: string | null;
@@ -140,19 +221,25 @@ export function DownloaderApp() {
         console.log("========================================");
         console.log("🔗 URL:", data.url);
         console.log("📝 Title:", data.title || "No title");
+        console.log("📄 Filename:", data.filename || "No filename");
         console.log("🍪 Has Cookies:", !!data.cookies);
+        console.log("🎵 Audio URL:", data.audioUrl || "No audio");
         console.log("========================================");
 
         // Also log as a table for better visibility
         console.table({
           URL: data.url,
           Title: data.title || "No title",
+          Filename: data.filename || "No filename",
           HasCookies: !!data.cookies,
+          HasAudio: !!data.audioUrl,
         });
 
         // Set the URL in the input field
         setUrl(data.url || "");
         setTitle(data.title || null);
+        setFilename(data.filename || null);
+        setAudioUrl(data.audioUrl || null);
         setCookies(data.cookies || null);
         setDownloadProgress(null);
         setIsDownloading(false);
@@ -288,7 +375,7 @@ export function DownloaderApp() {
   return (
     <div className="flex h-screen w-screen flex-col items-center gap-4 bg-background p-0 text-sm select-none">
       <header className="flex w-full items-center justify-between border-b border-border bg-muted/40 px-4 py-2 text-xs font-semibold uppercase tracking-wide drag-css">
-        <span className="truncate">{title || "Download File Info"}</span>
+        <span className="truncate">{title || filename || "Download File"}</span>
         <div className="flex items-center gap-1.5">
           <Button
             type="button"
@@ -335,7 +422,7 @@ export function DownloaderApp() {
           id="download-input"
           readOnly
           value={url}
-          placeholder="https://example.com/video"
+          placeholder="https://example.com/file"
           className="h-9 text-xs"
         />
       </div>
@@ -355,14 +442,15 @@ export function DownloaderApp() {
             variant="outline"
             size="icon"
             className="h-9 w-9"
+            disabled={isDownloading || isDownloadComplete}
             onClick={async () => {
               if (!window?.ipcRenderer) return;
-              
+
               try {
                 const selectedPath = await window.ipcRenderer.invoke(
                   "select-download-location"
                 );
-                
+
                 if (selectedPath) {
                   // Set custom path for this file only (doesn't change default location)
                   setCustomDownloadPath(selectedPath);
@@ -540,6 +628,7 @@ export function DownloaderApp() {
                 await window.ipcRenderer.invoke("download-file", {
                   url,
                   filePath, // Use the computed file path
+                  audioUrl,
                   cookies,
                 });
               } catch (error) {

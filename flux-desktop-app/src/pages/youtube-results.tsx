@@ -32,7 +32,7 @@ interface YoutubeCrawlResult {
 type YoutubeResultsProps = {
   data: YoutubeCrawlResult | null;
   isLoading: boolean;
-  onDownload: (url: string, title?: string | null) => void;
+  onDownload: (url: string, title?: string | null, cookies?: null, audioUrl?: string | null) => void;
 };
 
 export function YoutubeResults({
@@ -145,7 +145,7 @@ export function YoutubeResults({
                   </div>
                   <Button
                     size="sm"
-                    onClick={() => onDownload(resolution.url, data.title)}
+                    onClick={() => onDownload(resolution.url, data.title, null, data.audio?.url || null)}
                     className="w-full sm:w-auto shrink-0"
                   >
                     <Download className="h-4 w-4 mr-2" />
