@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 // import { createRequire } from 'node:module'
+import { execSync } from "node:child_process";
 import fs from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
@@ -64,6 +65,86 @@ const ensureSettingsFile = async () => {
       "utf-8"
     );
   }
+};
+
+// Check if a command is available in PATH
+const isCommandAvailable = (command: string): boolean => {
+  try {
+    if (process.platform === "win32") {
+      // On Windows, use 'where' command
+      execSync(`where ${command}`, { stdio: "ignore" });
+    } else {
+      // On Unix-like systems, use 'which' command
+      execSync(`which ${command}`, { stdio: "ignore" });
+    }
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+// Check if Chocolatey is installed
+const checkChocolatey = (): boolean => {
+  try {
+    // Try to get choco version
+    execSync("choco --version", { stdio: "ignore" });
+    return true;
+  } catch {
+    // Also check if choco command exists in PATH
+    return isCommandAvailable("choco");
+  }
+};
+
+// Check if FFmpeg is installed
+const checkFFmpeg = (): boolean => {
+  try {
+    // Try to get ffmpeg version
+    execSync("ffmpeg -version", { stdio: "ignore" });
+    return true;
+  } catch {
+    // Also check if ffmpeg command exists in PATH
+    return isCommandAvailable("ffmpeg");
+  }
+};
+
+// Verify required dependencies before starting the app
+const verifyDependencies = async (): Promise<boolean> => {
+  const missingDeps: string[] = [];
+
+  if (!checkChocolatey()) {
+    missingDeps.push("Chocolatey (choco)");
+  }
+
+  if (!checkFFmpeg()) {
+    missingDeps.push("FFmpeg");
+  }
+
+  if (missingDeps.length > 0) {
+    const message = `The following required dependencies are not installed:\n\n${missingDeps
+      .map((dep) => `• ${dep}`)
+      .join(
+        "\n"
+      )}\n\nPlease install them before starting the application.\n\nInstallation instructions:\n\n1. Install Chocolatey:\n   Run PowerShell as Administrator and execute:\n   Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))\n\n2. Install FFmpeg:\n   Run in PowerShell (as Administrator):\n   choco install ffmpeg -y\n\nOr visit https://chocolatey.org/install and https://ffmpeg.org/download.html for manual installation.`;
+
+    // Show error dialog (we need to wait for app to be ready to show dialogs)
+    // For now, we'll log and exit
+    console.error(message);
+
+    // Try to show dialog if app is ready, otherwise just exit
+    if (app.isReady()) {
+      await dialog.showMessageBox({
+        type: "error",
+        title: "Missing Dependencies",
+        message: "Required Dependencies Not Found",
+        detail: message,
+        buttons: ["OK"],
+      });
+    }
+
+    return false;
+  }
+
+  return true;
 };
 
 process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
@@ -1115,6 +1196,16 @@ function createExtensionServer() {
 }
 
 app.whenReady().then(async () => {
+  // Verify required dependencies before starting
+  const depsOk = await verifyDependencies();
+  if (!depsOk) {
+    console.error("Missing required dependencies. Exiting application.");
+    app.quit();
+    return;
+  }
+
+  console.log("✓ Chocolatey and FFmpeg are installed");
+
   await ensureSettingsFile();
   createWindow();
   // Start extension server immediately
