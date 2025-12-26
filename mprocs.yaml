@@ -7,6 +7,6 @@ procs:
     shell: "cd flux-desktop && bun dev"
     autoRestart: true
 
-  # flux-extension:
-  #   shell: "cd flux-extension && bun dev"
-  #   autoRestart: true
+  flux-extension:
+    shell: "cd flux-extension && bun dev"
+    autoRestart: true
